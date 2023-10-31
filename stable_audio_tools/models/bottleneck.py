@@ -1,9 +1,10 @@
+from typing import List
 import torch
 from torch import nn
 from torch.nn import functional as F
 
 from einops import rearrange
-from vector_quantize_pytorch import ResidualVQ
+from vector_quantize_pytorch import ResidualVQ, FSQ
 from dac.nn.quantize import ResidualVectorQuantize as DACResidualVQ
 
 class Bottleneck(nn.Module):
@@ -256,3 +257,22 @@ class DACRVQVAEBottleneck(Bottleneck):
             x = self.quantizer(x)["z"]
 
         return x
+
+class FSQBottleneck(Bottleneck):
+    def __init__(self, dim: int, levels: List[int], vectors_per_frame: int, **quantizer_kwargs):
+        super().__init__()
+        self.fsq = FSQ(levels)
+        self.proj_in = nn.Linear(dim, vectors_per_frame * len(levels))
+        self.proj_out = nn.Linear(vectors_per_frame * len(levels), dim)
+        self.vpf = vectors_per_frame
+
+    def encode(self, x, return_info=False):
+        x = rearrange(self.proj_in(x.mT), "b n (vpf nlevels) -> b n vpf nlevels", vpf=self.vpf)
+        z, codes = self.fsq(x)
+        z = rearrange(z, "b n vpf nlevels -> b n (vpf nlevels)", vpf=self.vpf)
+        if return_info:
+            return z, { "z": z, "codes": codes }
+        return z
+
+    def decode(self, z):
+        return self.proj_out(z).mT

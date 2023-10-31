@@ -120,5 +120,13 @@ def create_bottleneck_from_config(bottleneck_config):
     elif bottleneck_type == "wasserstein":
         from .bottleneck import WassersteinBottleneck
         return WassersteinBottleneck(**bottleneck_config.get("config", {}))
+    elif bottleneck_type == "fsq":
+        from .bottleneck import FSQBottleneck
+        quantizer_params = {
+            "dim": 128,
+            "levels": [4, 4, 4, 4],
+            "vectors_per_frame": 8,
+        }
+        return FSQBottleneck(**bottleneck_config.get("config", {}))
     else:
         raise NotImplementedError(f'Unknown bottleneck type: {bottleneck_type}')
