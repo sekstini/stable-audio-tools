@@ -1,0 +1,14 @@
+{
+    "dataset_type": "audio_dir",
+    "datasets": [
+        {
+            "id": "lex_fridman_podcast",
+            "path": "/media/chonker/audio/segments/lex_fridman"
+        },
+        {
+            "id": "on_purpose_podcast",
+            "path": "/media/chonker/audio/segments/on_purpose"
+        }
+    ],
+    "random_crop": true
+}
