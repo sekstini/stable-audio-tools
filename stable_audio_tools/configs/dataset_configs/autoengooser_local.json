@@ -1,0 +1,22 @@
+{
+    "dataset_type": "audio_dir",
+    "datasets": [
+        {
+            "id": "lex_fridman_podcast",
+            "path": "/media/chonker/audio/segments/lex_fridman"
+        },
+        {
+            "id": "on_purpose_podcast",
+            "path": "/media/chonker/audio/segments/on_purpose"
+        },
+        {
+            "id": "expresso",
+            "path": "/media/chonker/audio/data/expresso"
+        },
+        {
+            "id": "vctk",
+            "path": "/media/chonker/audio/data/VCTK-Corpus-0.92"
+        }
+    ],
+    "random_crop": true
+}
