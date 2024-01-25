@@ -1,0 +1,50 @@
+{
+    "model_type": "lm",
+    "sample_size": 320000,
+    "sample_rate": 32000,
+    "audio_channels": 1,
+    "model": {
+        "pretransform": {
+            "type": "audiocraft_pretrained",
+            "config": {
+                "model_type": "facebook/encodec_32khz"
+            }
+        },
+        "conditioning": {
+            "configs": [
+                {
+                    "id": "prompt",
+                    "type": "t5",
+                    "config": {
+                        "t5_model_name": "t5-base",
+                        "max_length": 128,
+                        "project_out": true
+                    }
+                }
+            ],
+            "cond_dim": 1024
+        },
+        "lm": {
+            "codebook_pattern": "delay",
+            "type": "mamba",
+            "config": {
+                "embed_dim": 1024,
+                "n_layer": 24,
+                "fused_add_norm": true,
+                "residual_in_fp32": true,
+                "rms_norm": true
+            }
+        }
+    },
+    "training": {
+        "learning_rate": 2e-4,
+        "demo": {
+            "demo_every": 2000,
+            "demo_cond": [
+                {"prompt": "Once upon a time."},
+                {"prompt": "Each conditioner takes in the relevant conditioning data."}
+            ],
+            "demo_cfg_scales": [3, 6, 9]
+        }
+    }
+}
