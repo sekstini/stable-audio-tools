@@ -15,5 +15,5 @@
         }
     ],
     "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/libritts_text.py",
-    "random_crop": true
+    "random_crop": false
 }
