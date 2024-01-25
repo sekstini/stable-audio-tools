@@ -221,7 +221,7 @@ class AudioLanguageModelDemoCallback(pl.Callback):
 #                       init_data = demo_reals_tokens,
                         cfg_scale=cfg_scale,
                         temp=1.0,
-                        top_p=0.95
+                        top_p=0.95,
                     )
 
                 # Put the demos together
