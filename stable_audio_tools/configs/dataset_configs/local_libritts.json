@@ -8,6 +8,10 @@
         {
             "id": "LibriTTS-R/train-clean-360",
             "path": "data/LibriTTS_R/train-clean-360"
+        },
+        {
+            "id": "LibriTTS-R/train-other-500",
+            "path": "data/LibriTTS_R/train-other-500"
         }
     ],
     "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/libritts_text.py",
