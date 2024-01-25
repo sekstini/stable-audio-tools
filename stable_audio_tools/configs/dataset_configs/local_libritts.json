@@ -1,0 +1,15 @@
+{
+    "dataset_type": "audio_dir",
+    "datasets": [
+        {
+            "id": "LibriTTS-R/train-clean-100",
+            "path": "data/LibriTTS_R/train-clean-100"
+        },
+        {
+            "id": "LibriTTS-R/train-clean-360",
+            "path": "data/LibriTTS_R/train-clean-360"
+        }
+    ],
+    "custom_metadata_module": "stable_audio_tools/configs/dataset_configs/custom_metadata/libritts_text.py",
+    "random_crop": true
+}
