@@ -228,7 +228,7 @@ class AudioLanguageModelDemoCallback(pl.Callback):
                 
                 filename = f'demo_{trainer.global_step:08}_cfg-{cfg_scale}.wav'
                 fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
-                # torchaudio.save(filename, fakes, self.sample_rate)
+                torchaudio.save(filename, fakes, self.sample_rate)
 
                 log_dict[f'demo_cfg_{cfg_scale}'] = wandb.Audio(filename,
                                                     sample_rate=self.sample_rate,
