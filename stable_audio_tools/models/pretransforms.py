@@ -1,5 +1,7 @@
+from typing import Literal, cast
 from einops import rearrange
 from torch import nn
+import torch
 
 class Pretransform(nn.Module):
     def __init__(self, enable_grad, io_channels, is_discrete):
@@ -242,3 +244,48 @@ class AudiocraftCompressionPretransform(Pretransform):
     
     def decode_tokens(self, tokens):
         return self.model.decode(tokens)
+
+
+class VocosCompressionPretransform(Pretransform):
+    def __init__(self, model_type="charactr/vocos-encodec-24khz", bandwidth: float = 1.5):
+        super().__init__(enable_grad=False, io_channels=1, is_discrete=True)
+
+        assert bandwidth in [1.5, 3.0, 6.0, 12.0], "Vocos bandwidth must be one of 1.5, 3.0, 6.0, 12.0"
+
+        from vocos import Vocos
+        from vocos.feature_extractors import EncodecFeatures
+
+        self.model = Vocos.from_pretrained(model_type)
+        self.feature_extractor = cast(EncodecFeatures, self.model.feature_extractor)
+        self.encodec = self.feature_extractor.encodec
+
+        self.encodec.set_target_bandwidth(bandwidth)
+
+        self.downsampling_ratio = round(self.encodec.sample_rate / self.encodec.frame_rate)
+        self.io_channels = self.encodec.channels
+        self.num_quantizers = self.encodec.quantizer.get_num_quantizers_for_bandwidth(
+            self.encodec.frame_rate, bandwidth=bandwidth,
+        )
+        self.codebook_size = self.encodec.quantizer.bins
+        self.bandwidth_id = [1.5, 3.0, 6.0, 12.0].index(bandwidth)
+
+    def encode(self, x):
+        assert False, "Vocos compression models do not support continuous encoding"
+
+    def decode(self, z):
+        assert False, "Vocos compression models do not support continuous decoding"
+
+    def tokenize(self, x):
+        emb = self.encodec.encoder(x)
+        codes = self.encodec.quantizer.encode(emb, self.encodec.frame_rate, self.encodec.bandwidth) # [num_quantizers, batch, time]
+        return codes.transpose(0, 1).contiguous() # [batch, num_quantizers, time]
+
+    def decode_tokens(self, tokens):
+        tokens = tokens.transpose(0, 1).contiguous() # [num_quantizers, batch, time]
+        offsets = torch.arange(0, self.codebook_size * self.num_quantizers, self.codebook_size, device=tokens.device)
+        embeddings_idxs = tokens + offsets.view(-1, 1, 1)
+        features = torch.nn.functional.embedding(embeddings_idxs, self.feature_extractor.codebook_weights).sum(dim=0)
+        features = features.transpose(1, 2)
+
+        bandwidth_id = torch.tensor([self.bandwidth_id], device=tokens.device)
+        return self.model.decode(features, bandwidth_id=bandwidth_id).unsqueeze(1)
