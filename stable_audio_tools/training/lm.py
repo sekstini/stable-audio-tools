@@ -75,7 +75,7 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
 
     def _compute_cross_entropy(
         self, logits: torch.Tensor, targets: torch.Tensor, mask: torch.Tensor
-    ) -> tp.Tuple[torch.Tensor, tp.List[torch.Tensor]]:
+    ) -> tp.Tuple[torch.Tensor, torch.Tensor]:
         """Compute cross entropy between multi-codebook targets and model's logits.
         The cross entropy is computed per codebook to provide codebook-level cross entropy.
         Valid timesteps for each of the codebook are pulled from the mask, where invalid
@@ -92,20 +92,18 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         B, K, T = targets.shape
         assert logits.shape[:-1] == targets.shape
         assert mask.shape == targets.shape
-        ce = torch.zeros([], device=targets.device)
-        ce_per_codebook: tp.List[torch.Tensor] = []
+        ce_per_codebook: tp.List[torch.Tensor] | torch.Tensor = []
         for k in range(K):
             logits_k = logits[:, k, ...].contiguous().view(-1, logits.size(-1))  # [B x T, card]
             targets_k = targets[:, k, ...].contiguous().view(-1)  # [B x T]
             mask_k = mask[:, k, ...].contiguous().view(-1)  # [B x T]
             ce_targets = targets_k[mask_k]
             ce_logits = logits_k[mask_k]
-            q_ce = F.cross_entropy(ce_logits, ce_targets)
-            ce += q_ce
-            ce_per_codebook.append(q_ce.detach())
+            q_ce = F.cross_entropy(ce_logits.float(), ce_targets)
+            ce_per_codebook.append(q_ce)
+        ce_per_codebook = torch.stack(ce_per_codebook)
         # average cross entropy across codebooks
-        ce = ce / K
-        return ce, ce_per_codebook
+        return ce_per_codebook.mean(), ce_per_codebook.detach()
 
     def training_step(self, batch, batch_idx):
         reals, metadata = batch
