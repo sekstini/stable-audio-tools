@@ -228,7 +228,7 @@ class AudioLanguageModelDemoCallback(pl.Callback):
                 for i, wav in enumerate(fakes):
                     filename = f'demo_samples/step-{trainer.global_step-1:08}/{i:04}_cfg-{cfg_scale}.wav'
                     os.makedirs(os.path.dirname(filename), exist_ok=True)
-                    torchaudio.save(filename, fakes, self.sample_rate)
+                    torchaudio.save(filename, wav, self.sample_rate)
 
                     log_dict[f'demo_{i:08}_cfg_{cfg_scale}'] = wandb.Audio(filename, self.sample_rate, caption=f'Reconstructed - {i}')
 
