@@ -73,6 +73,11 @@ def create_pretransform_from_config(pretransform_config, sample_rate):
 
         audiocraft_config = pretransform_config["config"]
         pretransform = AudiocraftCompressionPretransform(**audiocraft_config)
+    elif pretransform_type == "vocos_pretrained":
+        from .pretransforms import VocosCompressionPretransform
+
+        vocos_config = pretransform_config["config"]
+        pretransform = VocosCompressionPretransform(**vocos_config)
     else:
         raise NotImplementedError(f'Unknown pretransform type: {pretransform_type}')
     
