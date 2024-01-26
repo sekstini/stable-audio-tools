@@ -221,7 +221,6 @@ class AudioLanguageModelDemoCallback(pl.Callback):
                 )
 
                 # Put the demos together
-                fakes = rearrange(fakes, 'b d n -> d (b n)')
                 fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
                 log_dict = {}
