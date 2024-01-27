@@ -18,7 +18,7 @@ from audiocraft.modules.codebooks_patterns import (
     MusicLMPattern,
     ParallelPatternProvider,
     UnrolledPatternProvider,
-    VALLEPattern,
+    CoarseFirstPattern,
 )
 
 # Copied and modified from https://github.com/facebookresearch/audiocraft/blob/main/audiocraft/models/lm.py under MIT license
@@ -59,24 +59,30 @@ class AudioLanguageModel(nn.Module):
             nn.Linear(backbone.embed_dim, codebook_size) for _ in range(num_quantizers)
         ])
 
+    def _embed(self, sequence: torch.Tensor) -> torch.Tensor:
+        return torch.stack([self.embeds[i](sequence[:, i]) for i in range(self.num_quantizers)]).sum(dim=0)
+
     def forward(self,
             sequence: torch.Tensor, #[batch, seq_len, 
             prepend_cond=None, #[batch, seq, channels]
             prepend_cond_mask=None,
-            cross_attn_cond=None, #[batch, seq, channels]
+            cross_attn_cond=None, #[batch, seq, channels],
+            **kwargs
         ):
 
         batch, num_quantizers, seq_len = sequence.shape
 
         assert num_quantizers == self.num_quantizers, "Number of quantizers in sequence must match number of quantizers in model"
 
-        backbone_input = sum([self.embeds[i](sequence[:, i]) for i in range(num_quantizers)]) # [batch, seq_len, embed_dim]
+        # backbone_input = sum([self.embeds[i](sequence[:, i]) for i in range(num_quantizers)]) # [batch, seq_len, embed_dim]
+        backbone_input = self._embed(sequence) # [batch, num_quantizers, seq_len, embed_dim]
 
         output = self.backbone(
             backbone_input,
             cross_attn_cond=cross_attn_cond,
             prepend_cond=prepend_cond,
-            prepend_cond_mask=prepend_cond_mask
+            prepend_cond_mask=prepend_cond_mask,
+            **kwargs
         ) # [batch, seq_len, embed_dim]
 
         # Run output through quantizer heads
@@ -286,7 +292,9 @@ class AudioLanguageModelWrapper(nn.Module):
         logits = logits[:, :, :, -1] # [batch, num_quantizers, codebook_size]
 
         # Apply top-k or top-p sampling
-
+        return self._sample(logits, top_k=top_k, top_p=top_p, temp=temp)
+        
+    def _sample(self, logits: torch.Tensor, top_k: int = 0, top_p: float = 0.0, temp: float = 1.0):
         if temp > 0:
             probs = torch.softmax(logits / temp, dim=-1)
 
@@ -312,6 +320,7 @@ class AudioLanguageModelWrapper(nn.Module):
         conditioning_tensors: tp.Optional[tp.Dict[str, tp.Any]] = None,
         callback: tp.Optional[tp.Callable[[int, int], None]] = None,
         use_cache: bool = True,
+        cfg_scale: float = 1.0,
         **kwargs
     ):
         device = next(self.parameters()).device
@@ -366,7 +375,7 @@ class AudioLanguageModelWrapper(nn.Module):
 
         # Reset generation cache
         if use_cache and self.lm.backbone.use_generation_cache:
-            self.lm.backbone.reset_generation_cache(max_gen_len, batch_size)
+            self.lm.backbone.reset_generation_cache(max_gen_len, batch_size if cfg_scale == 1.0 else batch_size * 2)
 
         for offset in trange(start_offset_sequence, gen_sequence_len):
 
@@ -376,11 +385,14 @@ class AudioLanguageModelWrapper(nn.Module):
             next_token = self._sample_next_token(
                 curr_sequence,
                 conditioning_tensors=conditioning_tensors,
+                use_cache=use_cache,
+                cfg_scale=cfg_scale,
                 **kwargs
             )
 
             valid_mask = mask[..., offset:offset+1].expand(batch_size, -1, -1)
-            next_token[~valid_mask] = self.lm.masked_token_id
+            next_token.masked_fill_(~valid_mask, self.lm.masked_token_id)
+            # next_token[~valid_mask] = self.lm.masked_token_id
 
             # Update the generated sequence with the next token
             gen_sequence[..., offset:offset+1] = torch.where(
@@ -444,7 +456,7 @@ def create_audio_lm_from_config(config):
         'parallel': ParallelPatternProvider,
         'delay': DelayedPatternProvider,
         'unroll': UnrolledPatternProvider,
-        'valle': VALLEPattern,
+        'valle': CoarseFirstPattern,
         'musiclm': MusicLMPattern,
     }
 

@@ -221,15 +221,15 @@ class AudioLanguageModelDemoCallback(pl.Callback):
                 )
 
                 # Put the demos together
+                fakes = rearrange(fakes, 'b d n -> d (b n)')
                 fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
                 log_dict = {}
-                for i, wav in enumerate(fakes):
-                    filename = f'demo_samples/step-{trainer.global_step-1:08}/{i:04}_cfg-{cfg_scale}.wav'
-                    os.makedirs(os.path.dirname(filename), exist_ok=True)
-                    torchaudio.save(filename, wav, self.sample_rate)
+                filename = f'demo_samples/step-{trainer.global_step-1:08}/stacked_cfg-{cfg_scale}.wav'
+                os.makedirs(os.path.dirname(filename), exist_ok=True)
+                torchaudio.save(filename, fakes, self.sample_rate)
 
-                    log_dict[f'demo_{i:08}_cfg_{cfg_scale}'] = wandb.Audio(filename, self.sample_rate, caption=f'Reconstructed - {i}')
+                log_dict[f'demo_stacked_cfg_{cfg_scale}'] = wandb.Audio(filename, self.sample_rate, caption="Reconstructed - stacked")
 
                 log_dict[f'demo_melspec_left_cfg_{cfg_scale}'] = wandb.Image(audio_spectrogram_image(fakes))
 

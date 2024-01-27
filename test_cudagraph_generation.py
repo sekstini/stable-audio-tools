@@ -12,16 +12,29 @@ from stable_audio_tools.models.utils import load_ckpt_state_dict
 from stable_audio_tools.training.utils import copy_state_dict
 
 
-def patch_mamba_with_cuda_graph(
+def optimize_mamba(
     model: AudioLanguageModelWrapper,
     batch_size: int,
     max_seqlen: int,
     cfg_scale: float,
-    decoding_seqlen=1,
+    decoding_seqlen: int = 1,
     n_warmups: int = 2,
     dtype: torch.dtype = torch.float16,
+    remove_special_token: bool = False,
+    torch_compile: bool = False,
     mempool=None,
 ):
+    if remove_special_token:
+        # Remove special token to enable tensor cores
+        model.lm.masked_token_id = 0
+        for emb in model.lm.embeds:
+            emb.num_embeddings -= 1
+            emb.weight.data = emb.weight.data[:-1].contiguous()
+
+    if torch_compile:
+        model.lm._embed = torch.compile(model.lm._embed, mode="reduce-overhead")
+        #model._sample = torch.compile(model._sample, mode="reduce-overhead")
+
     if cfg_scale != 1.0:
         batch_size *= 2
 
@@ -80,6 +93,8 @@ def main(
     top_p: float = 1.0,
     top_k: int = 0,
     cfg_scale: float = 1.0,
+
+    torch_compile: bool = False,
 ):
     model, model_config = load_model(model_config_path, model_ckpt_path)
 
@@ -88,7 +103,7 @@ def main(
     max_seqlen = int(frames_per_second * seconds)
 
     if isinstance(model.lm.backbone, MambaAudioLMBackbone):
-        patch_mamba_with_cuda_graph(model, batch_size, max_seqlen, cfg_scale)
+        optimize_mamba(model, batch_size, max_seqlen, cfg_scale, torch_compile=torch_compile)
 
     wavs = model.generate_audio(
         max_gen_len=max_seqlen,
