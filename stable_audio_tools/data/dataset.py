@@ -16,6 +16,8 @@ from os import path
 from pedalboard.io import AudioFile
 from torchaudio import transforms as T
 from typing import Optional, Callable, List
+from safetensors import safe_open
+from pathlib import Path
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
 
@@ -137,13 +139,16 @@ class SampleDataset(torch.utils.data.Dataset):
             Mono() if self.force_channels == "mono" else torch.nn.Identity(),
         )
 
-        self.filenames = get_audio_filenames(paths, keywords)
+        self.load_audio_filenames(paths, keywords)
 
         print(f'Found {len(self.filenames)} files')
 
         self.sr = sample_rate
 
         self.custom_metadata_fn = custom_metadata_fn
+
+    def load_audio_filenames(self, paths, keywords):
+        self.filenames = get_audio_filenames(paths, keywords)
 
     def load_file(self, filename):
         ext = filename.split(".")[-1]
@@ -160,7 +165,7 @@ class SampleDataset(torch.utils.data.Dataset):
             resample_tf = T.Resample(in_sr, self.sr)
             audio = resample_tf(audio)
 
-        return audio
+        return audio, {}
 
     def __len__(self):
         return len(self.filenames)
@@ -169,7 +174,7 @@ class SampleDataset(torch.utils.data.Dataset):
         audio_filename = self.filenames[idx]
         try:
             start_time = time.time()
-            audio = self.load_file(audio_filename)
+            audio, info = self.load_file(audio_filename)
 
             audio, t_start, t_end, seconds_start, seconds_total, padding_mask = self.pad_crop(audio)
 
@@ -182,8 +187,6 @@ class SampleDataset(torch.utils.data.Dataset):
             # Encode the file to assist in prediction
             if self.encoding is not None:
                 audio = self.encoding(audio)
-
-            info = {}
 
             info["path"] = audio_filename
 
@@ -509,6 +512,20 @@ class S3WebDataLoader():
         
         return sample
 
+
+class SafetensorsAudioDataset(SampleDataset):
+    def load_audio_filenames(self, shard_path: str, *args, **kwargs):
+        self.handle = safe_open(shard_path, framework="np")
+        self.key2text: dict[str, str] = self.handle.metadata()
+        self.filenames = list(self.key2text)
+
+    def load_file(self, filename: str):
+        text = self.key2text[filename]
+        wav, sr = torchaudio.load(self.handle.get_tensor(filename).tobytes())
+        wav = torchaudio.functional.resample(wav, sr, self.sr)
+        return wav, { "prompt": text }
+
+
 def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
 
     dataset_type = dataset_config.get("dataset_type", None)
@@ -522,7 +539,7 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
     else:
         force_channels = "stereo"
 
-    if dataset_type == "audio_dir":
+    if dataset_type == "audio_dir" or dataset_type == "safetensors_sharded":
 
         audio_dir_configs = dataset_config.get("datasets", None)
 
@@ -545,15 +562,32 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
             assert audio_dir_path is not None, "Path must be set for local audio directory configuration"
             training_dirs.append(audio_dir_path)
 
-        train_set = SampleDataset(
-            training_dirs,
-            sample_rate=model_config["sample_rate"],
-            sample_size=model_config["sample_size"],
-            random_crop=dataset_config.get("random_crop", True),
-            force_channels=force_channels,
-            custom_metadata_fn=custom_metadata_fn,
-            relpath=training_dirs[0] #TODO: Make relpath relative to each training dir
-        )
+        if dataset_type == "audio_dir":
+            train_set = SampleDataset(
+                training_dirs,
+                sample_rate=model_config["sample_rate"],
+                sample_size=model_config["sample_size"],
+                random_crop=dataset_config.get("random_crop", True),
+                force_channels=force_channels,
+                custom_metadata_fn=custom_metadata_fn,
+                relpath=training_dirs[0] #TODO: Make relpath relative to each training dir
+            )
+        else:
+            train_sets = []
+            for audio_dir in training_dirs:
+                audio_dir = Path(audio_dir)
+                for shard_path in audio_dir.glob("*.safetensors"):
+                    ts = SafetensorsAudioDataset(
+                        str(shard_path),
+                        sample_rate=model_config["sample_rate"],
+                        sample_size=model_config["sample_size"],
+                        random_crop=dataset_config.get("random_crop", True),
+                        force_channels=force_channels,
+                        custom_metadata_fn=custom_metadata_fn,
+                        relpath=str(shard_path)
+                    )
+                    train_sets.append(ts)
+            train_set = torch.utils.data.ConcatDataset(train_sets)
 
         return torch.utils.data.DataLoader(train_set, args.batch_size, shuffle=True,
                                 num_workers=args.num_workers, persistent_workers=True, pin_memory=True, drop_last=True, collate_fn=collation_fn)
