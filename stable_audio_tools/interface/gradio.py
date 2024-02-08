@@ -47,6 +47,7 @@ def load_model(model_config=None, model_ckpt_path=None, pretrained_name=None, pr
         print(f"Done loading pretransform")
 
     model.to(device).eval().requires_grad_(False)
+    model.lm.half()
 
     print(f"Done loading model")
 
@@ -288,9 +289,12 @@ def generate_uncond(
     return ("output.wav", [audio_spectrogram, *preview_images])
 
 def generate_lm(
+        text_input,
         temperature=1.0,
-        top_p=0.95,
-        top_k=0,    
+        top_p=0.93,
+        top_k=0,
+        cfg_scale=1.4,
+        duration=5,
         batch_size=1,
         ):
 
@@ -304,12 +308,12 @@ def generate_lm(
 
     audio = model.generate_audio(
         batch_size=batch_size,
-        max_gen_len = sample_size//model.pretransform.downsampling_ratio,
-        conditioning=None,
+        max_gen_len = (duration * sample_rate)//model.pretransform.downsampling_ratio,
+        conditioning=[{"prompt": text_input}],
         temp=temperature,
         top_p=top_p,
         top_k=top_k,
-        cfg_scale=1.0,
+        cfg_scale=cfg_scale,
         use_cache=True,
     )
 
@@ -321,7 +325,7 @@ def generate_lm(
 
     audio_spectrogram = audio_spectrogram_image(audio, sample_rate=sample_rate)
 
-    return ("output.wav", [audio_spectrogram])
+    return ("output.wav", audio_spectrogram)
 
 
 def create_uncond_sampling_ui(model_config):   
@@ -618,8 +622,6 @@ def create_diffusion_prior_ui(model_config):
 
 def create_lm_ui(model_config):
     with gr.Blocks() as ui:
-        output_audio = gr.Audio(label="Output audio", interactive=False)
-        audio_spectrogram_output = gr.Gallery(label="Output spectrogram", show_label=False)
 
         # Sampling params
         with gr.Row():
@@ -627,13 +629,26 @@ def create_lm_ui(model_config):
             top_p_slider = gr.Slider(minimum=0, maximum=1, step=0.01, value=0.95, label="Top p")
             top_k_slider = gr.Slider(minimum=0, maximum=100, step=1, value=0, label="Top k")
 
+        with gr.Row():
+            cfg_scale = gr.Slider(minimum=0.0, maximum=25.0, step=0.1, value=1.0, label="CFG scale")
+            duration_slider = gr.Slider(minimum=1, maximum=120, step=1, value=5, label="Duration (seconds)")
+        
+        text_input = gr.Textbox(label="Text prompt")
         generate_button = gr.Button("Generate", variant='primary', scale=1)
+        
+        with gr.Row():
+            output_audio = gr.Audio(label="Output audio", interactive=False)
+            audio_spectrogram_output = gr.Image(label="Output spectrogram", show_label=False)
+        
         generate_button.click(
             fn=generate_lm, 
             inputs=[
+                text_input,
                 temperature_slider, 
                 top_p_slider, 
-                top_k_slider
+                top_k_slider,
+                cfg_scale,
+                duration_slider,
             ], 
             outputs=[output_audio, audio_spectrogram_output],
             api_name="generate"

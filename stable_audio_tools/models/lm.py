@@ -53,11 +53,17 @@ class AudioLanguageModel(nn.Module):
         # Per-quantizer embedders
         # Add one for the mask embed
         self.embeds = nn.ModuleList([nn.Embedding(codebook_size + 1, backbone.embed_dim) for _ in range(num_quantizers)])
+        for layer in self.embeds:
+            nn.init.normal_(layer.weight, std=1/(backbone.embed_dim * num_quantizers)**0.5)
+
+        #self.out_norm = nn.LayerNorm(backbone.embed_dim)
 
         # Per-quantizer output heads
         self.quantizer_heads = nn.ModuleList([
-            nn.Linear(backbone.embed_dim, codebook_size) for _ in range(num_quantizers)
+            nn.Linear(backbone.embed_dim, codebook_size, bias=False) for _ in range(num_quantizers)
         ])
+        for layer in self.quantizer_heads:
+            nn.init.normal_(layer.weight, std=1/(backbone.embed_dim)**0.5)
 
     def _embed(self, sequence: torch.Tensor) -> torch.Tensor:
         return torch.stack([self.embeds[i](sequence[:, i]) for i in range(self.num_quantizers)]).sum(dim=0)
@@ -84,6 +90,8 @@ class AudioLanguageModel(nn.Module):
             prepend_cond_mask=prepend_cond_mask,
             **kwargs
         ) # [batch, seq_len, embed_dim]
+
+        # output = self.out_norm(output)
 
         # Run output through quantizer heads
         logits = torch.stack([self.quantizer_heads[i](output) for i in range(num_quantizers)], dim=1) # [batch, num_quantizers, seq_len, codebook_size]
@@ -153,7 +161,7 @@ class AudioLanguageModelWrapper(nn.Module):
             self.num_quantizers = self.pretransform.model.bottleneck.num_quantizers
             self.codebook_size = self.pretransform.model.bottleneck.codebook_size
         elif isinstance(self.pretransform, PretrainedDACPretransform):
-            self.num_quantizers = self.pretransform.model.num_quantizers
+            self.num_quantizers = self.pretransform.num_quantizers
             self.codebook_size = self.pretransform.model.codebook_size
         elif isinstance(self.pretransform, AudiocraftCompressionPretransform):
             self.num_quantizers = self.pretransform.num_quantizers

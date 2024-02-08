@@ -166,6 +166,7 @@ class AudioLanguageModelDemoCallback(pl.Callback):
                  sample_rate=48000,
                  demo_conditioning: tp.Optional[tp.Dict[str, tp.Any]] = None,
                  demo_cfg_scales: tp.Optional[tp.List[int]] = [3, 5, 7],
+                 enabled: bool = True,
                  **kwargs
     ):
         super().__init__()
@@ -177,10 +178,13 @@ class AudioLanguageModelDemoCallback(pl.Callback):
         self.last_demo_step = -1
         self.demo_conditioning = demo_conditioning
         self.demo_cfg_scales = demo_cfg_scales
+        self.enabled = enabled
 
     @rank_zero_only
     @torch.no_grad()
     def on_train_batch_end(self, trainer, module: AudioLanguageModelTrainingWrapper, outputs, batch, batch_idx):        
+        if not self.enabled:
+            return
 
         if (trainer.global_step - 1) % self.demo_every != 0 or self.last_demo_step == trainer.global_step:
             return

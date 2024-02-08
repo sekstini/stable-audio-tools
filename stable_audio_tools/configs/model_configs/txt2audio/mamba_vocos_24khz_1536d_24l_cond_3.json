@@ -1,0 +1,81 @@
+{
+    "model_type": "lm",
+    "sample_size": 240000,
+    "sample_rate": 24000,
+    "audio_channels": 1,
+    "model": {
+        "pretransform": {
+            "type": "vocos_pretrained",
+            "config": {
+                "model_type": "charactr/vocos-encodec-24khz",
+                "bandwidth": 3.0
+            }
+        },
+        "conditioning": {
+            "configs": [
+                {
+                    "id": "prompt",
+                    "type": "lut",
+                    "config": {
+                        "tokenizer_name": "google/byt5-base",
+                        "max_length": 256,
+                        "project_out": false
+                    }
+                }
+            ],
+            "cond_dim": 1536
+        },
+        "lm": {
+            "codebook_pattern": "delay",
+            "type": "mamba",
+            "config": {
+                "prepend_cond_dim": 1536,
+                "embed_dim": 1536,
+                "n_layer": 24,
+                "fused_add_norm": true,
+                "residual_in_fp32": true,
+                "rms_norm": true
+            },
+            "prepend_cond_ids": ["prompt"]
+        }
+    },
+    "training": {
+        "learning_rate": 2e-4,
+        "demo": {
+            "demo_every": 1000,
+            "demo_cond": [
+                {"prompt": "Once upon a time."},
+                {"prompt": "Each conditioner takes in the relevant conditioning data."},
+                {"prompt": "How much wood would a woodchuck chuck if a woodchuck could chuck wood?"},
+                {"prompt": "The quick brown fox jumps over the lazy dog."},
+                {"prompt": "The five boxing wizards jump quickly."},
+                {"prompt": "I'm sorry, Dave. I'm afraid I can't do that."},
+                {"prompt": "1 + 1 = 2"},
+                {"prompt": "Explooooooooooosion!"}
+            ],
+            "demo_cfg_scales": [1, 2, 4]
+        },
+        "optimizer_configs": {
+            "lm": {
+                "optimizer": {
+                    "type": "AdamW",
+                    "config": {
+                        "lr": 2e-4,
+                        "betas": [0.9, 0.95],
+                        "weight_decay": 0.1
+                    }
+                },
+                "scheduler": {
+                    "type": "OneCycleLR",
+                    "config": {
+                        "max_lr": 2e-4,
+                        "epochs": 48,
+                        "steps_per_epoch": 2771,
+                        "pct_start": 0.01,
+                        "cycle_momentum": false
+                    }
+                }
+            }
+        }
+    }
+}

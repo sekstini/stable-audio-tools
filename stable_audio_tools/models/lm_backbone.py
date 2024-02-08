@@ -186,7 +186,7 @@ class MambaAudioLMBackbone(AudioLMBackbone):
 
     def reset_generation_cache(self, max_seq_len, batch_size, dtype=None):
         if dtype is None:
-            dtype = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else torch.float32
+            dtype = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else next(self.parameters()).dtype
 
         if self.inference_params is None:
             self.inference_params = InferenceParams(max_seqlen=max_seq_len, max_batch_size=batch_size)
@@ -201,6 +201,7 @@ class MambaAudioLMBackbone(AudioLMBackbone):
         self.inference_params.seqlen_offset = seqlen_offset
 
     def init_graph(self, x):
+        #return
         s = torch.cuda.Stream()
         s.wait_stream(torch.cuda.current_stream())
         self.captured_x = x.clone()
@@ -221,7 +222,7 @@ class MambaAudioLMBackbone(AudioLMBackbone):
         prepend_length = 0
         if prepend_cond is not None and not (use_cache and self.inference_params.seqlen_offset > 0):
             # Project the prepend conditioning to the embedding dimension
-            prepend_cond = self.to_prepend_embed(prepend_cond)
+            prepend_cond = self.to_prepend_embed(prepend_cond.to(x.dtype))
             prepend_length = prepend_cond.shape[1]
 
             x = torch.cat([prepend_cond, x], dim=1)

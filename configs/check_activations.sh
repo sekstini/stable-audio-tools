@@ -1,0 +1,14 @@
+python train.py \
+    --name "audio_mamba_tests" \
+    --model-config "stable_audio_tools/configs/model_configs/txt2audio/mamba_vocos_24khz_1024d_5l-6kbit.json" \
+    --dataset-config "stable_audio_tools/configs/dataset_configs/local_libritts.json" \
+    --save-dir "checkpoints/mamba" \
+    --checkpoint-every 4677 \
+    --num-gpus 2 \
+    --batch-size 16 \
+    --accum-batches 1 \
+    --precision "bf16-mixed" \
+    --num-workers 8 \
+    --seed 42 \
+    --gradient-clip-val 0.2 \
+    #--monitor-activations true \

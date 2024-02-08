@@ -1,0 +1,57 @@
+{
+    "model_type": "lm",
+    "sample_size": 153600,
+    "sample_rate": 24000,
+    "audio_channels": 1,
+    "model": {
+        "pretransform": {
+            "type": "vocos_pretrained",
+            "config": {
+                "model_type": "charactr/vocos-encodec-24khz",
+                "bandwidth": 3.0
+            }
+        },
+        "lm": {
+            "codebook_pattern": "unroll",
+            "type": "mamba",
+            "config": {
+                "embed_dim": 1024,
+                "n_layer": 24,
+                "fused_add_norm": true,
+                "residual_in_fp32": true,
+                "rms_norm": true,
+                "ssm_cfg": {
+                    "d_state": 4
+                }
+            }
+        }
+    },
+    "training": {
+        "learning_rate": 8e-4,
+        "demo": {
+            "demo_every": 1000
+        },
+        "optimizer_configs": {
+            "lm": {
+                "optimizer": {
+                    "type": "AdamW",
+                    "config": {
+                        "lr": 8e-4,
+                        "betas": [0.9, 0.95],
+                        "weight_decay": 0.1
+                    }
+                },
+                "scheduler": {
+                    "type": "OneCycleLR",
+                    "config": {
+                        "max_lr": 8e-4,
+                        "epochs": 16,
+                        "steps_per_epoch": 9355,
+                        "pct_start": 0.005,
+                        "cycle_momentum": false
+                    }
+                }
+            }
+        }
+    }
+}

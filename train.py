@@ -46,6 +46,12 @@ def main():
 
     model = create_model_from_config(model_config)
 
+    if args.monitor_activations:
+        from activation_monitoring import attach_activation_monitoring_hooks
+        # only on rank 0
+        from pytorch_lightning.utilities.rank_zero import rank_zero_only
+        rank_zero_only(attach_activation_monitoring_hooks)(model, model_config)
+
     if args.pretrained_ckpt_path:
         copy_state_dict(model, load_ckpt_state_dict(args.pretrained_ckpt_path))
     
@@ -54,6 +60,7 @@ def main():
     
     training_wrapper = create_training_wrapper_from_config(model_config, model)
 
+    from pytorch_lightning.loggers import WandbLogger
     wandb_logger = pl.loggers.WandbLogger(project=args.name)
     wandb_logger.watch(training_wrapper)
 

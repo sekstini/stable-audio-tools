@@ -556,7 +556,7 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
         )
 
         return torch.utils.data.DataLoader(train_set, args.batch_size, shuffle=True,
-                                num_workers=args.num_workers, persistent_workers=True, pin_memory=True, drop_last=True, collate_fn=collation_fn)
+                                num_workers=args.num_workers, persistent_workers=args.num_workers > 0, pin_memory=True, drop_last=True, collate_fn=collation_fn)
 
     elif dataset_type == "s3":
         dataset_configs = []

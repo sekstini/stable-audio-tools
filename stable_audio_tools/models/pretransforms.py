@@ -128,7 +128,7 @@ class PQMFPretransform(Pretransform):
         return self.pqmf.inverse(x)
         
 class PretrainedDACPretransform(Pretransform):
-    def __init__(self, model_type="44khz", model_bitrate="8kbps", scale=1.0, quantize_on_decode: bool = True, chunked=True):
+    def __init__(self, model_type="44khz", model_bitrate="8kbps", scale=1.0, quantize_on_decode: bool = True, chunked=True, num_quantizers=None):
         super().__init__(enable_grad=False, io_channels=1, is_discrete=True)
         
         import dac
@@ -152,7 +152,7 @@ class PretrainedDACPretransform(Pretransform):
 
         self.encoded_channels = self.model.latent_dim
 
-        self.num_quantizers = self.model.n_codebooks
+        self.num_quantizers = num_quantizers or self.model.n_codebooks
 
         self.codebook_size = self.model.codebook_size
 
@@ -163,7 +163,7 @@ class PretrainedDACPretransform(Pretransform):
         if self.quantize_on_decode:
             output = latents
         else:
-            z, _, _, _, _ = self.model.quantizer(latents, n_quantizers=self.model.n_codebooks)
+            z, _, _, _, _ = self.model.quantizer(latents, n_quantizers=self.num_quantizers)
             output = z
         
         if self.scale != 1.0:
@@ -177,7 +177,7 @@ class PretrainedDACPretransform(Pretransform):
             z = z * self.scale
 
         if self.quantize_on_decode:
-            z, _, _, _, _ = self.model.quantizer(z, n_quantizers=self.model.n_codebooks)
+            z, _, _, _, _ = self.model.quantizer(z, n_quantizers=self.num_quantizers)
 
         return self.model.decode(z)
 
@@ -189,7 +189,7 @@ class PretrainedDACPretransform(Pretransform):
         return self.model.decode(latents)
     
 class AudiocraftCompressionPretransform(Pretransform):
-    def __init__(self, model_type="facebook/encodec_32khz", scale=1.0, quantize_on_decode: bool = True):
+    def __init__(self, model_type="facebook/encodec_32khz", scale=1.0, quantize_on_decode: bool = True, num_quantizers=None):
         super().__init__(enable_grad=False, io_channels=1, is_discrete=True)
         
         from audiocraft.models import CompressionModel
@@ -206,7 +206,8 @@ class AudiocraftCompressionPretransform(Pretransform):
 
         #self.encoded_channels = self.model.latent_dim
 
-        self.num_quantizers = self.model.num_codebooks
+        self.num_quantizers = num_quantizers or self.model.num_codebooks
+        self.model.n_quantizers = num_quantizers or self.model.num_codebooks
 
         self.codebook_size = self.model.cardinality
 

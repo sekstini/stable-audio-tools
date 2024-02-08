@@ -279,7 +279,7 @@ class T5Conditioner(Conditioner):
                 # self.tokenizer = T5Tokenizer.from_pretrained(t5_model_name, model_max_length = max_length)
                 # model = T5EncoderModel.from_pretrained(t5_model_name, max_length=max_length).train(enable_grad).requires_grad_(enable_grad)
                 self.tokenizer = AutoTokenizer.from_pretrained(t5_model_name)
-                model = T5EncoderModel.from_pretrained(t5_model_name).train(enable_grad).requires_grad_(enable_grad).to(torch.float16)
+                model = T5EncoderModel.from_pretrained(t5_model_name).train(enable_grad).requires_grad_(enable_grad)
             finally:
                 logging.disable(previous_level)
             
@@ -307,7 +307,7 @@ class T5Conditioner(Conditioner):
 
         self.model.eval()
             
-        with torch.cuda.amp.autocast(dtype=torch.float16) and torch.set_grad_enabled(self.enable_grad):
+        with torch.set_grad_enabled(self.enable_grad):
             embeddings = self.model(
                 input_ids=input_ids, attention_mask=attention_mask
             )["last_hidden_state"]    
@@ -345,6 +345,7 @@ class PhonemeConditioner(Conditioner):
 
         # Reserving 0 for padding, 1 for ignored
         self.phoneme_embedder = nn.Embedding(len(self.g2p.phonemes) + 2, output_dim)
+        nn.init.normal_(self.phoneme_embedder.weight, std=1/(output_dim)**0.5)
 
     def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
         
@@ -353,7 +354,7 @@ class PhonemeConditioner(Conditioner):
 
         batch_phonemes = [self.g2p(text) for text in texts] # shape [batch_size, length]
         
-        phoneme_ignore = [" ", *string.punctuation]
+        phoneme_ignore = {" ", *string.punctuation}
 
         # Remove ignored phonemes and cut to max length
         batch_phonemes = [[p if p not in phoneme_ignore else "_" for p in phonemes] for phonemes in batch_phonemes]
@@ -363,16 +364,17 @@ class PhonemeConditioner(Conditioner):
 
         #Pad to match longest and make a mask tensor for the padding
         longest = max([len(ids) for ids in phoneme_ids])
-        phoneme_ids = [ids + [0] * (longest - len(ids)) for ids in phoneme_ids]
+        bos, eos = 2, 3
+        phoneme_ids = [[*((0,) * (longest - len(ids))), bos, *ids, eos] for ids in phoneme_ids]
         
-        phoneme_ids = torch.tensor(phoneme_ids).to(device)
+        phoneme_ids = torch.tensor(phoneme_ids, device=device)
 
         # Convert to embeddings
         phoneme_embeds = self.phoneme_embedder(phoneme_ids)
         
         phoneme_embeds = self.proj_out(phoneme_embeds)
 
-        return phoneme_embeds, torch.ones(phoneme_embeds.shape[0], phoneme_embeds.shape[1]).to(device)
+        return phoneme_embeds, torch.ones(phoneme_embeds.shape[0], phoneme_embeds.shape[1], device=device)
   
 class TokenizerLUTConditioner(Conditioner):
     """
@@ -409,6 +411,7 @@ class TokenizerLUTConditioner(Conditioner):
         self.max_length = max_length
 
         self.token_embedder = nn.Embedding(len(self.tokenizer), output_dim)
+        torch.nn.init.normal_(self.token_embedder.weight, std=1/(output_dim)**0.5)
 
     def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
         self.proj_out.to(device)
