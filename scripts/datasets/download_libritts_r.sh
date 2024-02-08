@@ -1,0 +1,1 @@
+wget -P data/LibriTTS_R https://www.openslr.org/resources/141/$1.tar.gz
