@@ -55,7 +55,7 @@ class AudioLanguageModel(nn.Module):
         # Add one for the mask embed
         self.embeds = nn.ModuleList([nn.Embedding(codebook_size + 1, backbone.embed_dim) for _ in range(num_quantizers)])
         for m in self.embeds:
-            std = std or backbone.embed_dim ** -0.5
+            std = std or (backbone.embed_dim * num_quantizers) ** -0.5
             nn.init.trunc_normal_(m.weight, std=std, a=-3*std, b=3*std)
 
         # Per-quantizer output heads
