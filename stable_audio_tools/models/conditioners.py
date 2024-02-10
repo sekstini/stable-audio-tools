@@ -334,6 +334,7 @@ class PhonemeConditioner(Conditioner):
             output_dim: int,
             max_length: int = 1024,
             project_out: bool = False,
+            std: float | None = None,
     ):
         super().__init__(output_dim, output_dim, project_out=project_out)
         
@@ -345,6 +346,9 @@ class PhonemeConditioner(Conditioner):
 
         # Reserving 0 for padding, 1 for ignored
         self.phoneme_embedder = nn.Embedding(len(self.g2p.phonemes) + 2, output_dim)
+
+        std = std or output_dim ** -0.5
+        nn.init.trunc_normal_(self.phoneme_embedder.weight, std=std, a=-3*std, b=3*std)
 
     def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
         
@@ -391,6 +395,7 @@ class TokenizerLUTConditioner(Conditioner):
             output_dim: int,
             max_length: int = 1024,
             project_out: bool = False,
+            std: float | None = None,
     ):
         super().__init__(output_dim, output_dim, project_out=project_out)
         
@@ -409,6 +414,9 @@ class TokenizerLUTConditioner(Conditioner):
         self.max_length = max_length
 
         self.token_embedder = nn.Embedding(len(self.tokenizer), output_dim)
+
+        std = std or output_dim ** -0.5
+        nn.init.trunc_normal_(self.token_embedder.weight, std=std, a=-3*std, b=3*std)
 
     def forward(self, texts: tp.List[str], device: tp.Union[torch.device, str]) -> tp.Tuple[torch.Tensor, torch.Tensor]:
         self.proj_out.to(device)
