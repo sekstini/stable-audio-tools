@@ -521,7 +521,8 @@ class SafetensorsAudioDataset(SampleDataset):
 
     def load_file(self, filename: str):
         text = self.key2text[filename]
-        wav, sr = torchaudio.load(self.handle.get_tensor(filename).tobytes())
+        buf = io.BytesIO(self.handle.get_tensor(filename).data)
+        wav, sr = torchaudio.load(buf)
         wav = torchaudio.functional.resample(wav, sr, self.sr)
         return wav, { "prompt": text }
 
