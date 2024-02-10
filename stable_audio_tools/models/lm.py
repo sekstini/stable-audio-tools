@@ -39,7 +39,8 @@ class AudioLanguageModel(nn.Module):
             pattern_provider: CodebooksPatternProvider, 
             backbone: AudioLMBackbone,
             num_quantizers: int,
-            codebook_size: int
+            codebook_size: int,
+            std: float | None = None,
         ):
         super().__init__()
 
@@ -53,11 +54,17 @@ class AudioLanguageModel(nn.Module):
         # Per-quantizer embedders
         # Add one for the mask embed
         self.embeds = nn.ModuleList([nn.Embedding(codebook_size + 1, backbone.embed_dim) for _ in range(num_quantizers)])
+        for m in self.embeds:
+            std = std or backbone.embed_dim ** -0.5
+            nn.init.trunc_normal_(m.weight, std=std, a=-3*std, b=3*std)
 
         # Per-quantizer output heads
         self.quantizer_heads = nn.ModuleList([
-            nn.Linear(backbone.embed_dim, codebook_size) for _ in range(num_quantizers)
+            nn.Linear(backbone.embed_dim, codebook_size, bias=False) for _ in range(num_quantizers)
         ])
+        for m in self.quantizer_heads:
+            std = std or backbone.embed_dim ** -0.5
+            nn.init.trunc_normal_(m.weight, std=std, a=-3*std, b=3*std)
 
     def forward(self,
             sequence: torch.Tensor, #[batch, seq_len, 
@@ -516,7 +523,8 @@ def create_audio_lm_from_config(config):
         pattern_provider=pattern_provider,
         backbone=backbone,
         num_quantizers=pretransform.num_quantizers,
-        codebook_size=pretransform.codebook_size
+        codebook_size=pretransform.codebook_size,
+        std=lm_model_config.get("std"),
     )
 
     model = AudioLanguageModelWrapper(
