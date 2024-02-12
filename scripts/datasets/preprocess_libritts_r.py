@@ -12,7 +12,7 @@ MiB = 1024 * KiB
 GiB = 1024 * MiB
 
 
-def process_dataset(dataset_path: str | Path, max_byte_per_shard: int = 512*MiB):
+def process_dataset(dataset_path: str | Path, max_byte_per_shard: int = 25*GiB):
     dataset_path = Path(dataset_path)
     
     out_dir = dataset_path.with_suffix("").with_suffix("")
