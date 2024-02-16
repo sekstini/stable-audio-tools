@@ -122,7 +122,7 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
         if self.model.conditioner is not None:
             condition_tensors = self.model.conditioner(metadata, self.device)
 
-        lm_output = self.model.compute_logits(codes, condition_tensors=condition_tensors, cfg_dropout_prob=0.1)
+        lm_output = self.model.compute_logits(codes, condition_tensors=condition_tensors, cfg_dropout_prob=0.0)
 
         logits = lm_output.logits # [b, k, t, c]
         logits_mask = lm_output.mask # [b, k, t]
