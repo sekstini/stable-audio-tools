@@ -9,7 +9,7 @@ from .autoencoders import AudioAutoencoder
 from .conditioners import MultiConditioner, create_multi_conditioner_from_conditioning_config
 from .factory import create_pretransform_from_config
 from .lm_backbone import AudioLMBackbone, XTransformersAudioLMBackbone, MambaAudioLMBackbone, ContinuousTransformerAudioLMBackbone
-from .pretransforms import Pretransform, AutoencoderPretransform, PretrainedDACPretransform, AudiocraftCompressionPretransform
+from .pretransforms import Pretransform, AutoencoderPretransform, PretrainedDACPretransform, AudiocraftCompressionPretransform, VocosCompressionPretransform
 from .utils import multinomial, sample_top_k, sample_top_p
 
 from audiocraft.modules.codebooks_patterns import (
@@ -160,6 +160,9 @@ class AudioLanguageModelWrapper(nn.Module):
             self.num_quantizers = self.pretransform.model.num_quantizers
             self.codebook_size = self.pretransform.model.codebook_size
         elif isinstance(self.pretransform, AudiocraftCompressionPretransform):
+            self.num_quantizers = self.pretransform.num_quantizers
+            self.codebook_size = self.pretransform.codebook_size
+        elif isinstance(self.pretransform, VocosCompressionPretransform):
             self.num_quantizers = self.pretransform.num_quantizers
             self.codebook_size = self.pretransform.codebook_size
         else:
