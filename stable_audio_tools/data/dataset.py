@@ -10,6 +10,7 @@ import time
 import torch
 import torchaudio
 import webdataset as wds
+import json
 
 from aeiou.core import is_silence
 from os import path
@@ -512,19 +513,25 @@ class S3WebDataLoader():
         
         return sample
 
+# Regrets...
+def unpack(sample: np.ndarray) -> tuple[np.ndarray, dict]:
+    header_len = sample[0:4].view(np.uint32).item()
+    metadata = json.loads(sample[4:4+header_len].tobytes())
+    audio_bytes_np = sample[4+header_len:]
+    return audio_bytes_np, metadata
 
 class SafetensorsAudioDataset(SampleDataset):
     def load_audio_filenames(self, shard_path: str, *args, **kwargs):
         self.handle = safe_open(shard_path, framework="np")
-        self.key2text: dict[str, str] = self.handle.metadata()
-        self.filenames = list(self.key2text)
+        self.filenames = self.handle.keys()
 
     def load_file(self, filename: str):
-        text = self.key2text[filename]
-        buf = io.BytesIO(self.handle.get_tensor(filename).data)
+        sample: np.ndarray = self.handle.get_tensor(filename)
+        audio_bytes_np, metadata = unpack(sample)
+        buf = io.BytesIO(audio_bytes_np.data)
         wav, sr = torchaudio.load(buf)
         wav = torchaudio.functional.resample(wav, sr, self.sr)
-        return wav, { "prompt": text }
+        return wav, metadata
 
 
 def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
