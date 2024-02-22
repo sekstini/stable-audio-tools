@@ -522,11 +522,13 @@ def unpack(sample: np.ndarray) -> tuple[np.ndarray, dict]:
 
 class SafetensorsAudioDataset(SampleDataset):
     def load_audio_filenames(self, shard_path: str, *args, **kwargs):
-        self.handle = safe_open(shard_path, framework="np")
-        self.filenames = self.handle.keys()
+        self.shard_path = shard_path
+        with safe_open(shard_path, framework="np") as handle:
+            self.filenames = handle.keys()
 
     def load_file(self, filename: str):
-        sample: np.ndarray = self.handle.get_tensor(filename)
+        with safe_open(self.shard_path, framework="np") as handle:
+            sample: np.ndarray = handle.get_tensor(filename)
         audio_bytes_np, metadata = unpack(sample)
         buf = io.BytesIO(audio_bytes_np.data)
         wav, sr = torchaudio.load(buf)
