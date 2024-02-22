@@ -19,6 +19,7 @@ from torchaudio import transforms as T
 from typing import Optional, Callable, List
 from safetensors import safe_open
 from pathlib import Path
+from torch.utils import data
 
 from .utils import Stereo, Mono, PhaseFlipper, PadCrop_Normalized_T
 
@@ -599,8 +600,17 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
                     train_sets.append(ts)
             train_set = torch.utils.data.ConcatDataset(train_sets)
 
-        return torch.utils.data.DataLoader(train_set, args.batch_size, shuffle=True,
-                                num_workers=args.num_workers, persistent_workers=True, pin_memory=True, drop_last=True, collate_fn=collation_fn)
+        return data.DataLoader(
+            train_set,
+            args.batch_size,
+            shuffle=True,
+            num_workers=args.num_workers,
+            persistent_workers=True,
+            pin_memory=True,
+            drop_last=True,
+            collate_fn=collation_fn,
+            prefetch_factor=3,
+        )
 
     elif dataset_type == "s3":
         dataset_configs = []
