@@ -83,6 +83,7 @@ def create_optimizer_from_config(optimizer_config, parameters):
         torch.optim.Optimizer: optimizer.
     """
     optimizer_fn = getattr(torch.optim, optimizer_config["type"])
+    parameters = list(parameters)
     wd_params = [p for p in parameters if not getattr(p, "_no_weight_decay", False)]
     no_wd_params = [p for p in parameters if getattr(p, "_no_weight_decay", False)]
     print(f"Weight decay parameters: {len(wd_params)}, No weight decay parameters: {len(no_wd_params)}")
