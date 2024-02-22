@@ -1,3 +1,4 @@
+import os
 import pytorch_lightning as pl
 import sys, gc
 import random
@@ -223,17 +224,15 @@ class AudioLanguageModelDemoCallback(pl.Callback):
 
                 # Put the demos together
                 fakes = rearrange(fakes, 'b d n -> d (b n)')
+                fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
 
                 log_dict = {}
-                
-                filename = f'demo_cfg_{cfg_scale}_{trainer.global_step:08}.wav'
-                fakes = fakes.clamp(-1, 1).mul(32767).to(torch.int16).cpu()
+                filename = f'demo_samples/step-{trainer.global_step-1:08}/stacked_cfg-{cfg_scale}.wav'
+                os.makedirs(os.path.dirname(filename), exist_ok=True)
                 torchaudio.save(filename, fakes, self.sample_rate)
 
-                log_dict[f'demo_cfg_{cfg_scale}'] = wandb.Audio(filename,
-                                                    sample_rate=self.sample_rate,
-                                                    caption=f'Reconstructed')
-            
+                log_dict[f'demo_stacked_cfg_{cfg_scale}'] = wandb.Audio(filename, self.sample_rate, caption="Reconstructed - stacked")
+
                 log_dict[f'demo_melspec_left_cfg_{cfg_scale}'] = wandb.Image(audio_spectrogram_image(fakes))
 
                 trainer.logger.experiment.log(log_dict)
