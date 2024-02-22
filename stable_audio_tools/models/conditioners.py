@@ -393,9 +393,11 @@ class TokenizerLUTConditioner(Conditioner):
             self,
             tokenizer_name: str, # Name of a tokenizer from the Hugging Face transformers library
             output_dim: int,
-            max_length: int = 1024,
+            max_length: int | None = None,
             project_out: bool = False,
             std: float | None = None,
+            padding_side: str | None = None,
+            padding: str = "max_length",
     ):
         super().__init__(output_dim, output_dim, project_out=project_out)
         
@@ -411,7 +413,14 @@ class TokenizerLUTConditioner(Conditioner):
             finally:
                 logging.disable(previous_level)
 
+        if padding_side is not None:
+            self.tokenizer.padding_side = padding_side
+        
         self.max_length = max_length
+        self.padding = padding
+
+        if max_length is None:
+            self.padding = "longest"
 
         self.token_embedder = nn.Embedding(len(self.tokenizer), output_dim)
 
@@ -425,7 +434,7 @@ class TokenizerLUTConditioner(Conditioner):
             texts,
             truncation=True,
             max_length=self.max_length,
-            padding="max_length",
+            padding=self.padding,
             return_tensors="pt",
         )
 
