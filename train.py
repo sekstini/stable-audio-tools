@@ -105,7 +105,8 @@ def main():
         callbacks=[ckpt_callback, demo_callback, exc_callback, save_model_config_callback],
         logger=wandb_logger,
         log_every_n_steps=1,
-        max_epochs=10000000,
+        max_epochs=args.max_epochs,
+        max_steps=args.max_steps,
         default_root_dir=args.save_dir,
         gradient_clip_val=args.gradient_clip_val,
         reload_dataloaders_every_n_epochs = 0
