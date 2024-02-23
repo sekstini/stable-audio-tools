@@ -164,6 +164,7 @@ class MambaAudioLMBackbone(AudioLMBackbone):
         super().__init__(embed_dim=embed_dim, use_generation_cache=True)
 
         # Embeddings are done in the AudioLanguageModel, so we use the continuous-input transformer
+        self.d_model = embed_dim
         self.model = MambaModel(
             d_model=embed_dim,
             **kwargs
@@ -197,7 +198,7 @@ class MambaAudioLMBackbone(AudioLMBackbone):
     def reset_generation_cache(self, max_seq_len, batch_size, dtype=None):
 
         if dtype is None:
-            dtype = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else torch.float32
+            dtype = torch.get_autocast_gpu_dtype() if torch.is_autocast_enabled() else next(self.parameters()).dtype
 
         if self.inference_params is None:
             self.inference_params = InferenceParams(max_seqlen=max_seq_len, max_batch_size=batch_size)
@@ -211,13 +212,19 @@ class MambaAudioLMBackbone(AudioLMBackbone):
     def update_generation_cache(self, seqlen_offset):
         self.inference_params.seqlen_offset = seqlen_offset
 
-    def init_graph(self, x):
+    def init_graph(self, dtype: torch.dtype):
         s = torch.cuda.Stream()
         s.wait_stream(torch.cuda.current_stream())
-        self.captured_x = x.clone()
+
+        batch_size = self.inference_params.max_batch_size
+        decoding_seqlen = 1
+        hidden_dim = self.d_model
+
+        self.captured_x = torch.full((batch_size, decoding_seqlen, hidden_dim), 0.0, dtype=dtype, device="cuda")
+
         with torch.cuda.stream(s):
             for _ in range(self.graph_warmups):
-                self.captured_logits = self.model(self.captured_x, inference_params=self.inference_params)
+                self.model(self.captured_x, inference_params=self.inference_params)
             s.synchronize()
         torch.cuda.current_stream().wait_stream(s)
 
@@ -232,14 +239,14 @@ class MambaAudioLMBackbone(AudioLMBackbone):
         prepend_length = 0
         if prepend_cond is not None and not (use_cache and self.inference_params.seqlen_offset > 0):
             # Project the prepend conditioning to the embedding dimension
-            prepend_cond = self.to_prepend_embed(prepend_cond)
+            prepend_cond = self.to_prepend_embed(prepend_cond.to(x.dtype))
             prepend_length = prepend_cond.shape[1]
 
             x = torch.cat([prepend_cond, x], dim=1)
 
         if use_cache and self.inference_params.seqlen_offset == 1 and not self.cuda_graph_captured:
             # Second iteration, first time using the step() function, we need to capture the graph here
-            self.init_graph(x)
+            self.init_graph(x.dtype)
 
         if use_cache and self.cuda_graph_captured and self.inference_params.seqlen_offset > 0:
             self.captured_x.copy_(x)
