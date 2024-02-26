@@ -6,6 +6,7 @@ import pytorch_lightning as pl
 import random
 
 from pytorch_lightning import callbacks, loggers, accelerators, plugins, profilers, strategies
+from pytorch_lightning.plugins.environments import SLURMEnvironment
 
 from stable_audio_tools.data.dataset import create_dataloader_from_configs_and_args
 from stable_audio_tools.models import create_model_from_config
@@ -26,6 +27,7 @@ class ModelConfigEmbedderCallback(pl.Callback):
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
         checkpoint["model_config"] = self.model_config
+
 
 def main():
 
@@ -118,6 +120,11 @@ def main():
             )
         )
 
+    trainer_plugins = []
+
+    if SLURMEnvironment.detect():
+        trainer_plugins.append(SLURMEnvironment(auto_requeue=False))
+
 
     trainer = pl.Trainer(
         devices=args.num_gpus,
@@ -133,6 +140,7 @@ def main():
         max_steps=args.max_steps,
         default_root_dir=args.save_dir,
         gradient_clip_val=args.gradient_clip_val,
+        plugins=trainer_plugins,
     )
 
     trainer.fit(training_wrapper, train_dl, ckpt_path=args.ckpt_path if args.ckpt_path else None)
