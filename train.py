@@ -91,7 +91,7 @@ def main():
                 overlap_comm=True,
                 reduce_scatter=True,
                 reduce_bucket_size=5e8,
-                allgather_bucket_size=5e8
+                allgather_bucket_size=5e8,
                 load_full_weights=True,
             )
         elif args.strategy == "ddp":
