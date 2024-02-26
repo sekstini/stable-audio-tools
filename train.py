@@ -5,6 +5,8 @@ import torch
 import pytorch_lightning as pl
 import random
 
+from pytorch_lightning import callbacks, loggers, accelerators, plugins, profilers, strategies
+
 from stable_audio_tools.data.dataset import create_dataloader_from_configs_and_args
 from stable_audio_tools.models import create_model_from_config
 from stable_audio_tools.models.utils import load_ckpt_state_dict
@@ -57,8 +59,8 @@ def main():
     
     training_wrapper = create_training_wrapper_from_config(model_config, model)
 
-    wandb_logger = pl.loggers.WandbLogger(project=args.name)
-    wandb_logger.watch(training_wrapper)
+    wandb_logger = loggers.WandbLogger(project=args.name)
+    wandb_logger.watch(training_wrapper, log="all", log_freq=500)
 
     exc_callback = ExceptionCallback()
     
@@ -67,7 +69,7 @@ def main():
     else:
         checkpoint_dir = None
 
-    ckpt_callback = pl.callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, dirpath=checkpoint_dir, save_top_k=-1)
+    ckpt_callback = callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, dirpath=checkpoint_dir, save_last=True)
     save_model_config_callback = ModelConfigEmbedderCallback(model_config)
 
     demo_callback = create_demo_callback_from_config(model_config, demo_dl=train_dl)
@@ -81,19 +83,41 @@ def main():
     #Set multi-GPU strategy if specified
     if args.strategy:
         if args.strategy == "deepspeed":
-            from pytorch_lightning.strategies import DeepSpeedStrategy
-            strategy = DeepSpeedStrategy(stage=2, 
-                                        contiguous_gradients=True, 
-                                        overlap_comm=True, 
-                                        reduce_scatter=True, 
-                                        reduce_bucket_size=5e8, 
-                                        allgather_bucket_size=5e8,
-                                        load_full_weights=True
-                                        )
+            strategy = strategies.DeepSpeedStrategy(
+                stage=2,
+                contiguous_gradients=True,
+                overlap_comm=True,
+                reduce_scatter=True,
+                reduce_bucket_size=5e8,
+                allgather_bucket_size=5e8
+                load_full_weights=True,
+            )
+        elif args.strategy == "ddp":
+            strategy = strategies.DDPStrategy(
+                gradient_as_bucket_view=True,
+                find_unused_parameters=False,
+                static_graph=True,
+                bucket_cap_mb=40,
+            )
         else:
             strategy = args.strategy
     else:
         strategy = 'ddp_find_unused_parameters_true' if args.num_gpus > 1 else "auto" 
+
+    trainer_callbacks = [
+        ckpt_callback,
+        demo_callback,
+        exc_callback,
+        save_model_config_callback,
+    ]
+
+    if model_config["training"].get("grad_accum_schedule"):
+        trainer_callbacks.append(
+            callbacks.GradientAccumulationScheduler(
+                model_config["training"]["grad_accum_schedule"]
+            )
+        )
+
 
     trainer = pl.Trainer(
         devices=args.num_gpus,
@@ -102,14 +126,13 @@ def main():
         strategy=strategy,
         precision=args.precision,
         accumulate_grad_batches=args.accum_batches, 
-        callbacks=[ckpt_callback, demo_callback, exc_callback, save_model_config_callback],
+        callbacks=trainer_callbacks,
         logger=wandb_logger,
         log_every_n_steps=1,
         max_epochs=args.max_epochs,
         max_steps=args.max_steps,
         default_root_dir=args.save_dir,
         gradient_clip_val=args.gradient_clip_val,
-        reload_dataloaders_every_n_epochs = 0
     )
 
     trainer.fit(training_wrapper, train_dl, ckpt_path=args.ckpt_path if args.ckpt_path else None)
