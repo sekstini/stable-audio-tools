@@ -4,6 +4,7 @@ import os
 import torch
 import pytorch_lightning as pl
 import random
+import signal
 
 from pytorch_lightning import callbacks, loggers, accelerators, plugins, profilers, strategies
 from pytorch_lightning.plugins.environments import SLURMEnvironment
@@ -27,6 +28,27 @@ class ModelConfigEmbedderCallback(pl.Callback):
 
     def on_save_checkpoint(self, trainer, pl_module, checkpoint):
         checkpoint["model_config"] = self.model_config
+
+
+SIGUSR1_TRIGGERED = False
+SIGUSR1_SAVED = False
+
+def signal_handler_usr1(sig, frame):
+    print(f'Got SigUSR1. Stopping...', flush=True)
+    global SIGUSR1_TRIGGERED
+    SIGUSR1_TRIGGERED = True
+
+print('Registering handler for SigUSR1...')
+signal.signal(signal.SIGUSR1, signal_handler_usr1)
+
+class SaveOnSigUSR1Callback(pl.Callback):
+    def on_train_batch_end(self, trainer: pl.Trainer, pl_module: pl.LightningModule, outputs, batch, batch_idx: int) -> None:
+        global SIGUSR1_TRIGGERED, SIGUSR1_SAVED
+        if SIGUSR1_TRIGGERED and not SIGUSR1_SAVED:
+            hpc_save_path = trainer._checkpoint_connector.hpc_save_path(trainer.default_root_dir)
+            trainer.save_checkpoint(hpc_save_path)
+            SIGUSR1_TRIGGERED = False
+            SIGUSR1_SAVED = True
 
 
 def main():
@@ -54,6 +76,7 @@ def main():
     model = create_model_from_config(model_config)
 
     if args.pretrained_ckpt_path:
+        print(f'Loading pretrained model from {args.pretrained_ckpt_path}')
         copy_state_dict(model, load_ckpt_state_dict(args.pretrained_ckpt_path))
     
     if args.pretransform_ckpt_path:
@@ -65,13 +88,19 @@ def main():
     wandb_logger.watch(training_wrapper, log="all", log_freq=500)
 
     exc_callback = ExceptionCallback()
-    
-    if args.save_dir and isinstance(wandb_logger.experiment.id, str):
-        checkpoint_dir = os.path.join(args.save_dir, wandb_logger.experiment.project, wandb_logger.experiment.id, "checkpoints") 
-    else:
-        checkpoint_dir = None
 
-    ckpt_callback = callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, dirpath=checkpoint_dir, save_last=True)
+    RUN_ID = args.id or os.environ.get("SLURM_JOB_ID")
+    if RUN_ID:
+        print(f'RUN_ID: {RUN_ID}')
+        save_dir = os.path.join(args.save_dir, args.name, str(RUN_ID))
+    elif args.save_dir and isinstance(wandb_logger.experiment.id, str):
+        save_dir = os.path.join(args.save_dir, wandb_logger.experiment.project, wandb_logger.experiment.id)
+    else:
+        save_dir = None
+
+    print(f'Save dir: {save_dir}')
+
+    ckpt_callback = callbacks.ModelCheckpoint(every_n_train_steps=args.checkpoint_every, dirpath=save_dir, save_last=True)
     save_model_config_callback = ModelConfigEmbedderCallback(model_config)
 
     demo_callback = create_demo_callback_from_config(model_config, demo_dl=train_dl)
@@ -111,12 +140,13 @@ def main():
         demo_callback,
         exc_callback,
         save_model_config_callback,
+        SaveOnSigUSR1Callback(),
     ]
 
     if model_config["training"].get("grad_accum_schedule"):
         trainer_callbacks.append(
             callbacks.GradientAccumulationScheduler(
-                model_config["training"]["grad_accum_schedule"]
+                dict(model_config["training"]["grad_accum_schedule"])
             )
         )
 
@@ -138,7 +168,7 @@ def main():
         log_every_n_steps=1,
         max_epochs=args.max_epochs,
         max_steps=args.max_steps,
-        default_root_dir=args.save_dir,
+        default_root_dir=save_dir,
         gradient_clip_val=args.gradient_clip_val,
         plugins=trainer_plugins,
     )
