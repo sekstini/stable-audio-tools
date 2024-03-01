@@ -18,7 +18,7 @@ from audiocraft.modules.codebooks_patterns import (
     MusicLMPattern,
     ParallelPatternProvider,
     UnrolledPatternProvider,
-    VALLEPattern,
+    CoarseFirstPattern,
 )
 
 # Copied and modified from https://github.com/facebookresearch/audiocraft/blob/main/audiocraft/models/lm.py under MIT license
@@ -483,7 +483,7 @@ def create_audio_lm_from_config(config):
         'parallel': ParallelPatternProvider,
         'delay': DelayedPatternProvider,
         'unroll': UnrolledPatternProvider,
-        'valle': VALLEPattern,
+        'valle': CoarseFirstPattern,
         'musiclm': MusicLMPattern,
     }
 
