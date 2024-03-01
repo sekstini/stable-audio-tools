@@ -6,7 +6,8 @@ def load_ckpt_state_dict(ckpt_path):
         state_dict = load_file(ckpt_path)
     else:
         state_dict = torch.load(ckpt_path, map_location="cpu")["state_dict"]
-    
+
+    state_dict = {k.removeprefix("model."): v for k, v in state_dict.items()}
     return state_dict
 
 # Sampling functions copied from https://github.com/facebookresearch/audiocraft/blob/main/audiocraft/utils/utils.py under MIT license

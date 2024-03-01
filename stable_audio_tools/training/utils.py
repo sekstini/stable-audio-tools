@@ -63,13 +63,23 @@ def copy_state_dict(model, state_dict):
         state_dict (OrderedDict): state_dict to load.
     """
     model_state_dict = model.state_dict()
+    found = set()
+    missing = set()
     for key in state_dict:
         if key in model_state_dict and state_dict[key].shape == model_state_dict[key].shape:
             if isinstance(state_dict[key], torch.nn.Parameter):
                 # backwards compatibility for serialized parameters
                 state_dict[key] = state_dict[key].data
+            found.add(key)
             model_state_dict[key] = state_dict[key]
+        else:
+            missing.add(key)
         
+    print(f"Loaded {len(found)} keys from checkpoint")
+    print(f"Missing {len(missing)} keys from checkpoint")
+
+    assert len(found) > 0, "No keys found in checkpoint! This is probably an error."
+
     model.load_state_dict(model_state_dict, strict=False)
 
 def create_optimizer_from_config(optimizer_config, parameters):
