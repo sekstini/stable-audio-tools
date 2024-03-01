@@ -418,10 +418,6 @@ class TokenizerLUTConditioner(Conditioner):
         
         self.max_length = max_length
         self.padding = padding
-
-        if max_length is None:
-            self.padding = "longest"
-
         self.token_embedder = nn.Embedding(len(self.tokenizer), output_dim)
 
         std = std or output_dim ** -0.5
@@ -435,6 +431,7 @@ class TokenizerLUTConditioner(Conditioner):
             truncation=True,
             max_length=self.max_length,
             padding=self.padding,
+            pad_to_multiple_of=8,
             return_tensors="pt",
         )
 
