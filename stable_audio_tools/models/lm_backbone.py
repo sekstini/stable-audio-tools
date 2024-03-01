@@ -213,6 +213,7 @@ class MambaAudioLMBackbone(AudioLMBackbone):
         self.inference_params.seqlen_offset = seqlen_offset
 
     def init_graph(self, dtype: torch.dtype):
+        return
         s = torch.cuda.Stream()
         s.wait_stream(torch.cuda.current_stream())
 
