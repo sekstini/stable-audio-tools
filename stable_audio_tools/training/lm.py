@@ -167,7 +167,7 @@ class AudioLanguageModelDemoCallback(pl.Callback):
     def __init__(self, 
                  demo_every=2000,
                  num_demos=8,
-                 sample_size=65536,
+                 seconds_per_demo=5,
                  sample_rate=48000,
                  demo_conditioning: tp.Optional[tp.Dict[str, tp.Any]] = None,
                  demo_cfg_scales: tp.Optional[tp.List[int]] = [3, 5, 7],
@@ -177,7 +177,7 @@ class AudioLanguageModelDemoCallback(pl.Callback):
 
         self.demo_every = demo_every
         self.num_demos = num_demos
-        self.demo_samples = sample_size
+        self.seconds_per_demo = int(seconds_per_demo)
         self.sample_rate = sample_rate
         self.last_demo_step = -1
         self.demo_conditioning = demo_conditioning
@@ -195,7 +195,7 @@ class AudioLanguageModelDemoCallback(pl.Callback):
         print(f"Generating demo")
         self.last_demo_step = trainer.global_step
 
-        demo_length_tokens = self.demo_samples // module.model.pretransform.downsampling_ratio
+        demo_length_tokens = self.seconds_per_demo * (self.sample_rate // module.model.pretransform.downsampling_ratio)
 
         # demo_reals = batch[0][:self.num_demos]
 

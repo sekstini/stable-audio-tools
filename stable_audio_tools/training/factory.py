@@ -248,8 +248,8 @@ def create_demo_callback_from_config(model_config, **kwargs):
 
         return AudioLanguageModelDemoCallback(
             demo_every=demo_config.get("demo_every", 2000), 
-            sample_size=model_config["sample_size"],
             sample_rate=model_config["sample_rate"],
+            seconds_per_demo=demo_config["seconds_per_demo"],
             demo_cfg_scales=demo_config.get("demo_cfg_scales", [1]),
             demo_conditioning=demo_config.get("demo_cond", None),
             num_demos=demo_config.get("num_demos", 8),
