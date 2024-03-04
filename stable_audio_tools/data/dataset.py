@@ -10,14 +10,14 @@ import time
 import torch
 import torchaudio
 import webdataset as wds
-import json
+import zipfile
 
+import msgspec
 from aeiou.core import is_silence
 from os import path
 from pedalboard.io import AudioFile
 from torchaudio import transforms as T
 from typing import Optional, Callable, List
-from safetensors import safe_open
 from pathlib import Path
 from torch.utils import data
 
@@ -122,7 +122,8 @@ class SampleDataset(torch.utils.data.Dataset):
         relpath=None, 
         random_crop=True,
         force_channels="stereo",
-        custom_metadata_fn: Optional[Callable[[str], str]] = None
+        custom_metadata_fn: Optional[Callable[[str], str]] = None,
+        **kwargs,
     ):
         super().__init__()
         self.filenames = []
@@ -148,6 +149,7 @@ class SampleDataset(torch.utils.data.Dataset):
         self.sr = sample_rate
 
         self.custom_metadata_fn = custom_metadata_fn
+        self.kwargs = kwargs
 
     def load_audio_filenames(self, paths, keywords):
         self.filenames = get_audio_filenames(paths, keywords)
@@ -514,25 +516,44 @@ class S3WebDataLoader():
         
         return sample
 
-# Regrets...
-def unpack(sample: np.ndarray) -> tuple[np.ndarray, dict]:
-    header_len = sample[0:4].view(np.uint32).item()
-    metadata = json.loads(sample[4:4+header_len].tobytes())
-    audio_bytes_np = sample[4+header_len:]
-    return audio_bytes_np, metadata
+class SampleMetadata(msgspec.Struct, gc=False, array_like=True):
+    key: str
+    prompt: str
+    speaker_id: str
+    duration: float
+    speaking_rate: float
+    snr: float
+    c50: float
 
-class SafetensorsAudioDataset(SampleDataset):
-    def load_audio_filenames(self, shard_path: str, *args, **kwargs):
-        self.shard_path = shard_path
-        self.handle = safe_open(shard_path, framework="np")
-        self.filenames = self.handle.keys()
+MetadataList = list[SampleMetadata]
+_decode_metadata = msgspec.json.Decoder(MetadataList).decode
+
+class MamboDataset(SampleDataset):
+    def load_audio_filenames(self, dataset_path: str | Path, *args, **kwargs):
+        self.dataset_path = Path(dataset_path)
+        self.metadata_path = self.dataset_path.with_suffix(".json")
+
+        self.metadata = {m.key: m for m in _decode_metadata(self.metadata_path.read_bytes())}
+        self.zip_handle = zipfile.ZipFile(self.dataset_path)
+        self.filenames = self.zip_handle.namelist()
+        self.speaker_id_mapping = self.kwargs.get("speaker_id_mapping", {})
+
+    def _load_metadata(self, filename: str) -> dict:
+        metadata = self.metadata[filename.rsplit(".", 1)[0]]
+        return {
+            "prompt": metadata.prompt,
+            "speaker_id": self.speaker_id_mapping.get(metadata.speaker_id),
+            "unmapped_speaker_id": metadata.speaker_id,
+            "duration": metadata.duration,
+            "speaking_rate": metadata.speaking_rate,
+            "snr": metadata.snr,
+            "c50": metadata.c50,
+        }
 
     def load_file(self, filename: str):
-        sample: np.ndarray = self.handle.get_tensor(filename)
-        audio_bytes_np, metadata = unpack(sample)
-        buf = io.BytesIO(audio_bytes_np.data)
-        wav, sr = torchaudio.load(buf)
+        wav, sr = torchaudio.load(self.zip_handle.open(filename))
         wav = torchaudio.functional.resample(wav, sr, self.sr)
+        metadata = self._load_metadata(filename)
         return wav, metadata
 
 
@@ -549,7 +570,7 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
     else:
         force_channels = "stereo"
 
-    if dataset_type == "audio_dir" or dataset_type == "safetensors_sharded":
+    if dataset_type == "audio_dir" or dataset_type == "mambo":
 
         audio_dir_configs = dataset_config.get("datasets", None)
 
@@ -584,17 +605,22 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
             )
         else:
             train_sets = []
+            speaker_id_mapping: dict[str, int] = {}
+            if "speaker_id_mapping" in dataset_config:
+                speaker_id_mapping = msgspec.json.decode(open(dataset_config["speaker_id_mapping"], "rb").read())
+
             for audio_dir in training_dirs:
                 audio_dir = Path(audio_dir)
                 for shard_path in audio_dir.glob("*.safetensors"):
-                    ts = SafetensorsAudioDataset(
+                    ts = MamboDataset(
                         str(shard_path),
                         sample_rate=model_config["sample_rate"],
                         sample_size=model_config["sample_size"],
                         random_crop=dataset_config.get("random_crop", True),
                         force_channels=force_channels,
                         custom_metadata_fn=custom_metadata_fn,
-                        relpath=str(shard_path)
+                        relpath=str(shard_path),
+                        speaker_id_mapping=speaker_id_mapping,
                     )
                     train_sets.append(ts)
             train_set = torch.utils.data.ConcatDataset(train_sets)

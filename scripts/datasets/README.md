@@ -24,5 +24,5 @@ data/mls/mls_english_opus
 
 ### 2. Run preprocessing script
 ```python
-python scripts/datasets/preprocess_mts.py data/mls/mls_english_opus.tar.gz
+python preprocessing/datasets/mts.py data/mls/mls_english_opus.tar.gz
 ```

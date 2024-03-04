@@ -32,3 +32,4 @@ vector-quantize-pytorch
 wandb
 webdataset
 x-transformers
+g2p_en
