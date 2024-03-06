@@ -6,16 +6,114 @@ import json
 import os
 
 from collections import namedtuple
+from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-from mamba_ssm.modules.mamba_simple import Mamba, Block
+from mamba_ssm.modules.mamba_simple import Mamba
 
 try:
     from mamba_ssm.ops.triton.layernorm import RMSNorm, layer_norm_fn, rms_norm_fn
 except ImportError:
     RMSNorm, layer_norm_fn, rms_norm_fn = None, None, None
+
+
+# @torch.compile
+def rms_norm(x: torch.Tensor, scale: torch.Tensor, eps: float):
+    dtype = torch.promote_types(x.dtype, torch.float32)
+    mean_sq = torch.mean(x.to(dtype)**2, dim=-1, keepdim=True)
+    scale = scale.to(dtype) * torch.rsqrt(mean_sq + eps)
+    return x * scale.to(x.dtype)
+
+class AdaRMSNorm(nn.Module):
+    def __init__(self, hidden_size: int, cond_size: int, eps: float = 1e-5, device=None, dtype=None):
+        factory_kwargs = {"device": device, "dtype": dtype}
+        super().__init__()
+        self.eps = eps
+        self.weight = torch.nn.Parameter(torch.empty(hidden_size, cond_size, **factory_kwargs))
+        self.register_buffer("bias", None)
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        nn.init.zeros_(self.weight)
+
+    def forward(self, x, cond, residual=None, prenorm=False, residual_in_fp32=False):
+        return rms_norm_fn(
+            x,
+            F.linear(cond, self.weight) + 1,
+            self.bias,
+            residual=residual,
+            eps=self.eps,
+            prenorm=prenorm,
+            residual_in_fp32=residual_in_fp32,
+        )
+
+
+class Block(nn.Module):
+    def __init__(
+        self, dim, mixer_cls, norm_cls=nn.LayerNorm, fused_add_norm=False, residual_in_fp32=False, global_cond_dim=0,
+    ):
+        """
+        Simple block wrapping a mixer class with LayerNorm/RMSNorm and residual connection"
+
+        This Block has a slightly different structure compared to a regular
+        prenorm Transformer block.
+        The standard block is: LN -> MHA/MLP -> Add.
+        [Ref: https://arxiv.org/abs/2002.04745]
+        Here we have: Add -> LN -> Mixer, returning both
+        the hidden_states (output of the mixer) and the residual.
+        This is purely for performance reasons, as we can fuse add and LayerNorm.
+        The residual needs to be provided (except for the very first block).
+        """
+        super().__init__()
+        self.residual_in_fp32 = residual_in_fp32
+        self.fused_add_norm = fused_add_norm
+        self.mixer = mixer_cls(dim)
+        self.norm = norm_cls(dim)
+        if self.fused_add_norm:
+            assert RMSNorm is not None, "RMSNorm import fails"
+            assert isinstance(
+                self.norm, (nn.LayerNorm, RMSNorm, AdaRMSNorm)
+            ), "Only LayerNorm and RMSNorm are supported for fused_add_norm"
+
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        residual: Optional[torch.Tensor] = None,
+        global_cond: Optional[torch.Tensor] = None,
+        inference_params=None,
+    ):
+        r"""Pass the input through the encoder layer.
+
+        Args:
+            hidden_states: the sequence to the encoder layer (required).
+            residual: hidden_states = Mixer(LN(residual))
+        """
+        if not self.fused_add_norm or isinstance(self.norm, AdaRMSNorm):
+            residual = (hidden_states + residual) if residual is not None else hidden_states
+            scale = F.linear(global_cond, self.norm.weight) + 1
+            hidden_states = rms_norm(residual, scale.unsqueeze(1), self.norm.eps)
+            if self.residual_in_fp32:
+                residual = residual.to(torch.float32, non_blocking=True)
+        else:
+            fused_add_norm_fn = rms_norm_fn if isinstance(self.norm, RMSNorm) else layer_norm_fn
+            hidden_states, residual = fused_add_norm_fn(
+                hidden_states,
+                self.norm.weight,
+                self.norm.bias,
+                residual=residual,
+                prenorm=True,
+                residual_in_fp32=self.residual_in_fp32,
+                eps=self.norm.eps,
+            )
+        hidden_states = self.mixer(hidden_states, inference_params=inference_params)
+        return hidden_states, residual
+
+    def allocate_inference_cache(self, batch_size, max_seqlen, dtype=None, **kwargs):
+        return self.mixer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, **kwargs)
 
 
 def create_block(
@@ -26,6 +124,7 @@ def create_block(
     residual_in_fp32=False,
     fused_add_norm=False,
     layer_idx=None,
+    global_cond_dim=0,
     device=None,
     dtype=None,
 ):
@@ -33,15 +132,19 @@ def create_block(
         ssm_cfg = {}
     factory_kwargs = {"device": device, "dtype": dtype}
     mixer_cls = partial(Mamba, layer_idx=layer_idx, **ssm_cfg, **factory_kwargs)
-    norm_cls = partial(
-        nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_epsilon, **factory_kwargs
-    )
+
+    if rms_norm and global_cond_dim > 0:
+        norm_cls = partial(AdaRMSNorm, cond_size=global_cond_dim, eps=norm_epsilon, **factory_kwargs)
+    else:
+        norm_cls = partial(nn.LayerNorm if not rms_norm else RMSNorm, eps=norm_epsilon, **factory_kwargs)
+
     block = Block(
         d_model,
         mixer_cls,
         norm_cls=norm_cls,
         fused_add_norm=fused_add_norm,
         residual_in_fp32=residual_in_fp32,
+        global_cond_dim=global_cond_dim,
     )
     block.layer_idx = layer_idx
     return block
@@ -85,6 +188,7 @@ class MambaModel(nn.Module):
         ssm_cfg=None,
         norm_epsilon: float = 1e-5,
         rms_norm: bool = False,
+        global_cond_dim: int = 0,
         initializer_cfg=None,
         fused_add_norm=False,
         residual_in_fp32=False,
@@ -115,6 +219,7 @@ class MambaModel(nn.Module):
                     residual_in_fp32=residual_in_fp32,
                     fused_add_norm=fused_add_norm,
                     layer_idx=i,
+                    global_cond_dim=global_cond_dim,
                     **factory_kwargs,
                 )
                 for i in range(n_layer)
@@ -141,15 +246,14 @@ class MambaModel(nn.Module):
 
     def forward(self, x, global_cond=None, inference_params=None):
 
+        # global_cond shape: [n_layer, batch_size, global_cond_dim]
+
         residual = None
 
-        if global_cond is not None:
-            # global_cond should be in shape (batch_size, d_model)
-            x = x + global_cond.unsqueeze(1)            
-
-        for layer in self.layers:
+        for i, layer in enumerate(self.layers):
             x, residual = layer(
-                x, residual, inference_params=inference_params
+                x, residual, inference_params=inference_params,
+                global_cond=global_cond[i] if global_cond is not None else None,
             )
             
         if not self.fused_add_norm:

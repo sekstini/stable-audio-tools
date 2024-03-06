@@ -3,6 +3,7 @@ import os
 import io
 from pathlib import Path
 from typing import Iterator
+from shutil import copyfileobj
 
 import fire
 
@@ -51,7 +52,9 @@ class LibriTTS_R_SampleStream(SampleStream):
                 if basename not in self.valid_basenames:
                     continue
 
-                audio_stream = io.BytesIO(tar_stream.extractfile(info).read())
+                audio_stream = io.BytesIO()
+                copyfileobj(tar_stream.extractfile(info), audio_stream)
+                audio_stream.seek(0)
 
                 sample = Sample(
                     name=basename,
@@ -67,15 +70,16 @@ class LibriTTS_R_SampleStream(SampleStream):
                 tar_stream.members = []
 
 
-def process_dataset(dataset_path: str | Path):
+def process_dataset(dataset_path: str | Path, skip_metadata: bool = False):
     dataset_path = Path(dataset_path)
     processed_data_root = Path("data", "processed")
     processed_data_root.mkdir(exist_ok=True, parents=True)
 
     out_path = processed_data_root / dataset_path.with_suffix("").with_suffix(".zip").name
 
+    print(f"{skip_metadata=}")
     sample_stream = LibriTTS_R_SampleStream(dataset_path)
-    sample_stream.save_to_zip(out_path)
+    sample_stream.save_to_zip(out_path, write_metadata=not skip_metadata)
 
 
 if __name__ == "__main__":

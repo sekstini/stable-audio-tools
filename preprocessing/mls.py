@@ -2,6 +2,7 @@ import tarfile
 import io
 from pathlib import Path
 from typing import Iterator, TypedDict
+from shutil import copyfileobj
 
 import fire
 
@@ -55,7 +56,9 @@ class Multilingual_LibriSpeech(SampleStream):
                     continue
 
                 basename = filename[:filename.rfind('.')]
-                audio_stream = io.BytesIO(tar_stream.extractfile(info).read())
+                audio_stream = io.BytesIO()
+                copyfileobj(tar_stream.extractfile(info), audio_stream)
+                audio_stream.seek(0)
 
                 sample = Sample(
                     name=basename,

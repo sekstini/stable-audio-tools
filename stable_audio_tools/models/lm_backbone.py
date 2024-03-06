@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from x_transformers import ContinuousTransformerWrapper, Decoder
+from einops.layers.torch import Rearrange
 
 from .mamba_lm import MambaModel 
 from mamba_ssm.utils.generation import InferenceParams
@@ -158,6 +159,7 @@ class ContinuousTransformerAudioLMBackbone(AudioLMBackbone):
 class MambaAudioLMBackbone(AudioLMBackbone):
     def __init__(self,
                  embed_dim: int,
+                 n_layer: int,
                  prepend_cond_dim: int = 0,
                  global_cond_dim: int = 0,
                  **kwargs):
@@ -167,7 +169,9 @@ class MambaAudioLMBackbone(AudioLMBackbone):
         self.d_model = embed_dim
         self.model = MambaModel(
             d_model=embed_dim,
-            **kwargs
+            n_layer=n_layer,
+            global_cond_dim=global_cond_dim,
+            **kwargs,
         )
 
         if prepend_cond_dim > 0:
@@ -181,9 +185,8 @@ class MambaAudioLMBackbone(AudioLMBackbone):
         if global_cond_dim > 0:
             # Global conditioning
             self.to_global_embed = nn.Sequential(
-                nn.Linear(global_cond_dim, embed_dim, bias=False),
-                nn.SiLU(),
-                nn.Linear(embed_dim, embed_dim, bias=False)
+                nn.Linear(global_cond_dim, n_layer*global_cond_dim, bias=False),
+                Rearrange('b (n d) -> n b d', n=n_layer, d=global_cond_dim)
             )
 
         self.inference_params = None
@@ -245,6 +248,10 @@ class MambaAudioLMBackbone(AudioLMBackbone):
 
             x = torch.cat([prepend_cond, x], dim=1)
 
+        if global_cond is not None:# and not (use_cache and self.inference_params.seqlen_offset > 0):
+            # Project the global conditioning to the embedding dimension
+            global_cond = self.to_global_embed(global_cond.to(x.dtype)).contiguous()
+
         if use_cache and self.inference_params.seqlen_offset == 1 and not self.cuda_graph_captured:
             # Second iteration, first time using the step() function, we need to capture the graph here
             self.init_graph(x.dtype)
@@ -254,4 +261,8 @@ class MambaAudioLMBackbone(AudioLMBackbone):
             self.cuda_graph.replay()
             return self.captured_logits.clone()
 
-        return self.model(x, inference_params=self.inference_params if use_cache else None)[:, prepend_length:, :]
+        return self.model(
+            x,
+            inference_params=self.inference_params if use_cache else None,
+            global_cond=global_cond,
+        )[:, prepend_length:, :]

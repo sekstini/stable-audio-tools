@@ -1,10 +1,8 @@
 import zipfile
-import shutil
 import io
 import mmap
 from typing import Iterator, Literal, Optional
 from abc import abstractmethod
-from dataclasses import dataclass
 from pathlib import Path
 from multiprocessing.pool import Pool
 
@@ -69,8 +67,8 @@ def load_metadata_l(p: Path) -> MetadataL:
         mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
         return _decode_metadata_l(mm)
 
-@dataclass(slots=True)
-class Sample:
+
+class Sample(msgspec.Struct, gc=False):
     name: str
     ext: str
     prompt: str
@@ -120,36 +118,42 @@ class SampleStream:
             metadata[basename].phonemes = phonemes
 
 
-    def save_to_zip(self, zip_path: Path):
-        with zipfile.ZipFile(zip_path, mode="w") as zf:
+    def save_to_zip(self, zip_path: Path, write_metadata: bool = True):
+        print("WARNING: OVERRIDING write_metadata to False temporarily.")
+        write_metadata = False
+
+        with zipfile.ZipFile(zip_path, mode="x") as zf:
             metadata: Metadata = {}
             num_samples = len(self) if hasattr(self, "__len__") else None
 
             for sample in tqdm(self, desc="Writing to zip", total=num_samples):
                 audio_info = soundfile.info(sample.audio_byte_stream)
+                sample.audio_byte_stream.seek(0)
 
                 with zf.open(f"{sample.name}.{sample.ext}", mode="w") as f:
-                    shutil.copyfileobj(sample.audio_byte_stream, f)
+                    f.write(sample.audio_byte_stream.getbuffer())
 
-                self._validate_sample(sample)
+                if write_metadata:
+                    self._validate_sample(sample)
 
-                metadata[sample.name] = SampleMetadatav1(
-                    prompt=sample.prompt,
-                    phonemes=[],
-                    speaker_id=sample.speaker_id,
-                    duration=audio_info.duration,
-                    gender=sample.gender,
-                    language=sample.language,
-                    custom=sample.custom,
-                )
+                    metadata[sample.name] = SampleMetadatav1(
+                        prompt=sample.prompt,
+                        phonemes=[],
+                        speaker_id=sample.speaker_id,
+                        duration=audio_info.duration,
+                        gender=sample.gender,
+                        language=sample.language,
+                        custom=sample.custom,
+                    )
 
-        # Save metadata without phonemes in case of failure
-        partial_metadata_path = zip_path.with_suffix(".partial.json")
-        partial_metadata_path.write_bytes(msgspec.json.encode(metadata))
+        if write_metadata:
+            # Save metadata without phonemes in case of failure
+            partial_metadata_path = zip_path.with_suffix(".partial.json")
+            partial_metadata_path.write_bytes(msgspec.json.encode(metadata))
 
-        self._compute_phonemes(metadata)
+            self._compute_phonemes(metadata)
 
-        zip_path.with_suffix(".json").write_bytes(msgspec.json.encode(metadata))
+            zip_path.with_suffix(".json").write_bytes(msgspec.json.encode(metadata))
 
-        # Since we got this far, we can safely remove the partial metadata
-        partial_metadata_path.unlink(missing_ok=True)
+            # Since we got this far, we can safely remove the partial metadata
+            partial_metadata_path.unlink(missing_ok=True)

@@ -7,6 +7,7 @@ import tarfile
 import io
 from pathlib import Path
 from typing import Iterator
+from shutil import copyfileobj
 
 import fire
 
@@ -49,7 +50,9 @@ class Expresso_SampleStream(SampleStream):
 
                 basename = filename.removesuffix(".wav")
 
-                audio_stream = io.BytesIO(stream.extractfile(info).read())
+                audio_stream = io.BytesIO()
+                copyfileobj(stream.extractfile(info), audio_stream)
+                audio_stream.seek(0)
 
                 sample = Sample(
                     name=basename,

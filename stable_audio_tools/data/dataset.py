@@ -11,6 +11,7 @@ import torch
 import torchaudio
 import webdataset as wds
 import zipfile
+import operator
 
 import msgspec
 from aeiou.core import is_silence
@@ -123,11 +124,13 @@ class SampleDataset(torch.utils.data.Dataset):
         random_crop=True,
         force_channels="stereo",
         custom_metadata_fn: Optional[Callable[[str], str]] = None,
+        ext: str = "",
         **kwargs,
     ):
         super().__init__()
         self.filenames = []
         self.relpath = relpath
+        self.ext = ext
 
         self.augs = torch.nn.Sequential(
             PhaseFlipper(),
@@ -215,7 +218,9 @@ class SampleDataset(torch.utils.data.Dataset):
 
             return (audio, info)
         except Exception as e:
+            import traceback
             print(f'Couldn\'t load file {audio_filename}: {e}')
+            traceback.print_exception(e)
             return self[random.randrange(len(self))]
 
 def group_by_keys(data, keys=wds.tariterators.base_plus_ext, lcase=True, suffixes=None, handler=None):
@@ -530,30 +535,32 @@ _decode_metadata = msgspec.json.Decoder(MetadataList).decode
 
 class MamboDataset(SampleDataset):
     def load_audio_filenames(self, dataset_path: str | Path, *args, **kwargs):
-        self.dataset_path = Path(dataset_path)
+        self.dataset_path = Path(dataset_path).with_suffix(".zip")
         self.metadata_path = self.dataset_path.with_suffix(".json")
 
-        self.metadata = {m.key: m for m in _decode_metadata(self.metadata_path.read_bytes())}
-        self.zip_handle = zipfile.ZipFile(self.dataset_path)
-        self.filenames = self.zip_handle.namelist()
-        self.speaker_id_mapping = self.kwargs.get("speaker_id_mapping", {})
+        metadata = _decode_metadata(self.metadata_path.read_bytes())
+        self.metadata = dict(zip(map(operator.attrgetter("key"), metadata), metadata))
+        self.filenames = list(self.metadata.keys())
+        self.zip_handle = None
 
-    def _load_metadata(self, filename: str) -> dict:
-        metadata = self.metadata[filename.rsplit(".", 1)[0]]
+    def _load_metadata(self, basename: str) -> dict:
+        metadata = self.metadata[basename]
         return {
             "prompt": metadata.prompt,
-            "speaker_id": self.speaker_id_mapping.get(metadata.speaker_id),
-            "unmapped_speaker_id": metadata.speaker_id,
+            "speaker_id": metadata.speaker_id,
             "duration": metadata.duration,
             "speaking_rate": metadata.speaking_rate,
             "snr": metadata.snr,
             "c50": metadata.c50,
         }
 
-    def load_file(self, filename: str):
+    def load_file(self, basename: str):
+        if self.zip_handle is None:
+            self.zip_handle = zipfile.ZipFile(self.dataset_path)
+        filename = f"{basename}.{self.ext}"
         wav, sr = torchaudio.load(self.zip_handle.open(filename))
         wav = torchaudio.functional.resample(wav, sr, self.sr)
-        metadata = self._load_metadata(filename)
+        metadata = self._load_metadata(basename)
         return wav, metadata
 
 
@@ -605,24 +612,21 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
             )
         else:
             train_sets = []
-            speaker_id_mapping: dict[str, int] = {}
-            if "speaker_id_mapping" in dataset_config:
-                speaker_id_mapping = msgspec.json.decode(open(dataset_config["speaker_id_mapping"], "rb").read())
 
-            for audio_dir in training_dirs:
-                audio_dir = Path(audio_dir)
-                for shard_path in audio_dir.glob("*.safetensors"):
-                    ts = MamboDataset(
-                        str(shard_path),
-                        sample_rate=model_config["sample_rate"],
-                        sample_size=model_config["sample_size"],
-                        random_crop=dataset_config.get("random_crop", True),
-                        force_channels=force_channels,
-                        custom_metadata_fn=custom_metadata_fn,
-                        relpath=str(shard_path),
-                        speaker_id_mapping=speaker_id_mapping,
-                    )
-                    train_sets.append(ts)
+            for audio_dir_config in audio_dir_configs:
+                audio_dir = Path(audio_dir_config["path"])
+                ext = audio_dir_config["ext"]
+                ts = MamboDataset(
+                    audio_dir,
+                    sample_rate=model_config["sample_rate"],
+                    sample_size=model_config["sample_size"],
+                    random_crop=dataset_config.get("random_crop", True),
+                    force_channels=force_channels,
+                    custom_metadata_fn=custom_metadata_fn,
+                    relpath=audio_dir,
+                    ext=ext
+                )
+                train_sets.append(ts)
             train_set = torch.utils.data.ConcatDataset(train_sets)
 
         return data.DataLoader(

@@ -2,6 +2,8 @@ import zipfile
 import io
 from pathlib import Path
 from typing import Iterator
+from shutil import copyfileobj
+
 
 import fire
 
@@ -42,7 +44,9 @@ class HiFi_Captain_SampleStream(SampleStream):
                     continue
 
                 basename = filename.removesuffix(".wav")
-                audio_stream = io.BytesIO(zf.read(info.filename))
+                audio_stream = io.BytesIO()
+                copyfileobj(zf.open(info.filename), audio_stream)
+                audio_stream.seek(0)
 
                 sample = Sample(
                     name=basename,

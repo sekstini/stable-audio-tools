@@ -76,7 +76,7 @@ class NumberConditioner(Conditioner):
             # Cast the inputs to floats
             floats = [float(x) for x in floats]
 
-            floats = torch.tensor(floats).to(device)
+            floats = torch.tensor(floats, device=device)
 
             floats = floats.clamp(self.min_val, self.max_val)
     
@@ -85,6 +85,21 @@ class NumberConditioner(Conditioner):
             float_embeds = self.embedder(normalized_floats).unsqueeze(1)
     
             return [float_embeds, torch.ones(float_embeds.shape[0], 1).to(device)]
+
+# https://github.com/crowsonkb/k-diffusion/blob/9737cfd85120cba1258b5b5b1dc6511356b5c924/k_diffusion/layers.py#L285
+class FourierConditioner(Conditioner):
+    def __init__(self, output_dim: int, input_dim: int = 1, std: float = 1.0, min_val: float = 0.0, max_val: float = 1.0):
+        super().__init__(output_dim, output_dim)
+        assert input_dim == 1
+        assert output_dim % 2 == 0
+        self.register_buffer("weight", torch.randn([output_dim // 2, input_dim]) * std)
+        self.min_val, self.max_val = min_val, max_val
+
+    def forward(self, x: list[float], device=None):
+        x = torch.tensor(x, device=device).reshape(-1, 1)
+        x = (x - self.min_val) / (self.max_val - self.min_val)
+        f = 2 * torch.pi * x @ self.weight.T
+        return [torch.cat([f.cos(), f.sin()], dim=-1).unsqueeze(1)]
 
 class CLAPTextConditioner(Conditioner):
     def __init__(self, 
@@ -498,19 +513,19 @@ class MultiConditioner(nn.Module):
 
             conditioner_inputs = []
 
-            for x in batch_metadata:
+            for meta in batch_metadata:
 
-                if condition_key not in x:
+                if condition_key not in meta:
                     if condition_key in self.default_keys:
                         condition_key = self.default_keys[condition_key]
                     else:
                         raise ValueError(f"Conditioner key {condition_key} not found in batch metadata")
 
                 #Unwrap the condition info if it's a single-element list or tuple, this is to support collation functions that wrap everything in a list
-                if isinstance(x[condition_key], list) or isinstance(x[condition_key], tuple) and len(x[condition_key]) == 1:
-                    conditioner_inputs.append(x[condition_key][0])
+                if isinstance(meta[condition_key], list) or isinstance(meta[condition_key], tuple) and len(meta[condition_key]) == 1:
+                    conditioner_inputs.append(meta[condition_key][0])
                 else:
-                    conditioner_inputs.append(x[condition_key])
+                    conditioner_inputs.append(meta[condition_key])
             
             output[key] = conditioner(conditioner_inputs, device)
 
@@ -548,6 +563,8 @@ def create_multi_conditioner_from_conditioning_config(config: tp.Dict[str, tp.An
             conditioners[id] = IntConditioner(**conditioner_config)
         elif conditioner_type == "number":
             conditioners[id] = NumberConditioner(**conditioner_config)
+        elif conditioner_type == "fourier":
+            conditioners[id] = FourierConditioner(**conditioner_config)
         elif conditioner_type == "phoneme":
             conditioners[id] = PhonemeConditioner(**conditioner_config)
         elif conditioner_type == "lut":
