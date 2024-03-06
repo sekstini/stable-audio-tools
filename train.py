@@ -47,6 +47,10 @@ class SaveOnSigUSR1Callback(pl.Callback):
         if SIGUSR1_TRIGGERED and not SIGUSR1_SAVED:
             hpc_save_path = trainer._checkpoint_connector.hpc_save_path(trainer.default_root_dir)
             trainer.save_checkpoint(hpc_save_path)
+
+            # Stop the trainer gracefully after saving the checkpoint
+            trainer.should_stop = True
+
             SIGUSR1_TRIGGERED = False
             SIGUSR1_SAVED = True
 
