@@ -44,24 +44,6 @@ class AudioLMBackbone(nn.Module):
     ):
         pass
 
-# class AdaRMSNorm(nn.Module):
-#     def __init__(self, hidden_size, eps=1e-5):
-#         super().__init__()
-#         self.eps = eps
-#         self.weight = nn.Parameter(torch.zeros(hidden_size))
-#         self.cond = None
-
-#     def set_cond(self, cond): #don't want to modify x-transformers forward pass. 
-#         self.cond = cond
-
-#     def forward(self, x):
-#         if self.cond is None:
-#             return x
-        
-#         scale = F.linear(self.cond, self.weight) + 1
-#         var = torch.mean(x ** 2, dim=-1, keepdim=True)
-#         x = x * torch.rsqrt(var + self.eps) * scale.unsqueeze(-1)
-#         return x
 
 def zero_init(layer):
     nn.init.zeros_(layer.weight)
