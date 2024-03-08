@@ -280,16 +280,18 @@ class VocosCompressionPretransform(Pretransform):
         assert False, "Vocos compression models do not support continuous decoding"
 
     def tokenize(self, x):
-        emb = self.encodec.encoder(x)
-        codes = self.encodec.quantizer.encode(emb, self.encodec.frame_rate, self.encodec.bandwidth) # [num_quantizers, batch, time]
-        return codes.transpose(0, 1).contiguous() # [batch, num_quantizers, time]
+        with torch.autocast("cuda", enabled=False):
+            emb = self.encodec.encoder(x)
+            codes = self.encodec.quantizer.encode(emb, self.encodec.frame_rate, self.encodec.bandwidth) # [num_quantizers, batch, time]
+            return codes.transpose(0, 1).contiguous() # [batch, num_quantizers, time]
 
     def decode_tokens(self, tokens):
-        tokens = tokens.transpose(0, 1).contiguous() # [num_quantizers, batch, time]
-        offsets = torch.arange(0, self.codebook_size * self.num_quantizers, self.codebook_size, device=tokens.device)
-        embeddings_idxs = tokens + offsets.view(-1, 1, 1)
-        features = torch.nn.functional.embedding(embeddings_idxs, self.feature_extractor.codebook_weights).sum(dim=0)
-        features = features.transpose(1, 2)
+        with torch.autocast("cuda", enabled=False):
+            tokens = tokens.transpose(0, 1).contiguous() # [num_quantizers, batch, time]
+            offsets = torch.arange(0, self.codebook_size * self.num_quantizers, self.codebook_size, device=tokens.device)
+            embeddings_idxs = tokens + offsets.view(-1, 1, 1)
+            features = torch.nn.functional.embedding(embeddings_idxs, self.feature_extractor.codebook_weights).sum(dim=0)
+            features = features.transpose(1, 2)
 
-        bandwidth_id = torch.tensor([self.bandwidth_id], device=tokens.device)
-        return self.model.decode(features, bandwidth_id=bandwidth_id).unsqueeze(1)
+            bandwidth_id = torch.tensor([self.bandwidth_id], device=tokens.device)
+            return self.model.decode(features, bandwidth_id=bandwidth_id).unsqueeze(1)
