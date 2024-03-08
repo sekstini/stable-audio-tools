@@ -63,6 +63,12 @@ class AudioLMBackbone(nn.Module):
 #         x = x * torch.rsqrt(var + self.eps) * scale.unsqueeze(-1)
 #         return x
 
+def zero_init(layer):
+    nn.init.zeros_(layer.weight)
+    if layer.bias is not None:
+        nn.init.zeros_(layer.bias)
+    return layer
+
 
 def rms_norm(x: torch.Tensor, scale: torch.Tensor, eps: float):
     dtype = torch.promote_types(x.dtype, torch.float32)
@@ -71,28 +77,25 @@ def rms_norm(x: torch.Tensor, scale: torch.Tensor, eps: float):
     return x * scale.to(x.dtype)
 
 class AdaRMSNorm(nn.Module):
-    def __init__(self, hidden_size: int, cond_size: int, eps: float = 1e-5, device=None, dtype=None):
-        factory_kwargs = {"device": device, "dtype": dtype}
+    def __init__(self, hidden_size: int, cond_size: int, eps: float = 1e-6,):
         super().__init__()
         self.eps = eps
-        self.weight = torch.nn.Parameter(torch.empty(hidden_size, cond_size, **factory_kwargs))
-        self.register_buffer("bias", None)
-        self.reset_parameters()
-
+        self.linear = zero_init(nn.Linear(cond_size, hidden_size, bias=False))
         self.cond = None
 
     def set_cond(self, cond): #don't want to modify x-transformers forward pass. 
         self.cond = cond
 
-    def reset_parameters(self):
-        nn.init.zeros_(self.weight)
 
     def forward(self, x,):
         return rms_norm(
             x,
-            F.linear(self.cond, self.weight) + 1,
+            self.linear(self.cond)[:, None, :] + 1,
             eps=self.eps,
         )
+    
+
+
 
 class XTransformersAudioLMBackbone(AudioLMBackbone):
     def __init__(self,
@@ -151,7 +154,8 @@ class XTransformersAudioLMBackbone(AudioLMBackbone):
                 norms = layer[0]
                 for i, norm in enumerate(norms):
                     if norm is not None:
-                        norms[i] = AdaRMSNorm(self.model.attn_layers.dim, global_cond_dim)
+                        norms[i] = AdaRMSNorm(embed_dim, global_cond_dim)
+
 
     def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None, global_cond=None, use_cache=False):
 
