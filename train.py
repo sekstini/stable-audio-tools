@@ -6,6 +6,7 @@ import pytorch_lightning as pl
 import random
 import signal
 
+import torchinfo
 from pytorch_lightning import callbacks, loggers, accelerators, plugins, profilers, strategies
 from pytorch_lightning.plugins.environments import SLURMEnvironment
 
@@ -14,6 +15,7 @@ from stable_audio_tools.models import create_model_from_config
 from stable_audio_tools.models.utils import load_ckpt_state_dict
 from stable_audio_tools.training import create_training_wrapper_from_config, create_demo_callback_from_config
 from stable_audio_tools.training.utils import copy_state_dict
+from pytorch_lightning.utilities.rank_zero import rank_zero_only
 
 torch.set_float32_matmul_precision("high")
 torch.backends.cudnn.allow_tf32 = True
@@ -87,6 +89,7 @@ def main():
         model.pretransform.load_state_dict(load_ckpt_state_dict(args.pretransform_ckpt_path))
     
     training_wrapper = create_training_wrapper_from_config(model_config, model)
+    rank_zero_only(torchinfo.summary)(training_wrapper, depth=7)
 
     wandb_logger = loggers.WandbLogger(project=args.name)
     wandb_logger.watch(training_wrapper, log="all", log_freq=500)
