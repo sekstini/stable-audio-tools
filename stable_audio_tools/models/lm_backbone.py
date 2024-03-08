@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 from x_transformers import ContinuousTransformerWrapper, Decoder
 from einops.layers.torch import Rearrange
 
@@ -43,11 +44,63 @@ class AudioLMBackbone(nn.Module):
     ):
         pass
 
+# class AdaRMSNorm(nn.Module):
+#     def __init__(self, hidden_size, eps=1e-5):
+#         super().__init__()
+#         self.eps = eps
+#         self.weight = nn.Parameter(torch.zeros(hidden_size))
+#         self.cond = None
+
+#     def set_cond(self, cond): #don't want to modify x-transformers forward pass. 
+#         self.cond = cond
+
+#     def forward(self, x):
+#         if self.cond is None:
+#             return x
+        
+#         scale = F.linear(self.cond, self.weight) + 1
+#         var = torch.mean(x ** 2, dim=-1, keepdim=True)
+#         x = x * torch.rsqrt(var + self.eps) * scale.unsqueeze(-1)
+#         return x
+
+
+def rms_norm(x: torch.Tensor, scale: torch.Tensor, eps: float):
+    dtype = torch.promote_types(x.dtype, torch.float32)
+    mean_sq = torch.mean(x.to(dtype)**2, dim=-1, keepdim=True)
+    scale = scale.to(dtype) * torch.rsqrt(mean_sq + eps)
+    return x * scale.to(x.dtype)
+
+class AdaRMSNorm(nn.Module):
+    def __init__(self, hidden_size: int, cond_size: int, eps: float = 1e-5, device=None, dtype=None):
+        factory_kwargs = {"device": device, "dtype": dtype}
+        super().__init__()
+        self.eps = eps
+        self.weight = torch.nn.Parameter(torch.empty(hidden_size, cond_size, **factory_kwargs))
+        self.register_buffer("bias", None)
+        self.reset_parameters()
+
+        self.cond = None
+
+    def set_cond(self, cond): #don't want to modify x-transformers forward pass. 
+        self.cond = cond
+
+    def reset_parameters(self):
+        nn.init.zeros_(self.weight)
+
+    def forward(self, x,):
+        return rms_norm(
+            x,
+            F.linear(self.cond, self.weight) + 1,
+            eps=self.eps,
+        )
+
 class XTransformersAudioLMBackbone(AudioLMBackbone):
     def __init__(self,
                  embed_dim: int,
                  cross_attn_cond_dim: int = 0,
                  prepend_cond_dim: int = 0,
+                 global_cond_dim: int = 0,
+                 depth: int = 24,
                  **kwargs):
         super().__init__(embed_dim=embed_dim)
 
@@ -58,6 +111,7 @@ class XTransformersAudioLMBackbone(AudioLMBackbone):
             max_seq_len=0, #Not relevant without absolute positional embeds,
             attn_layers=Decoder(
                 dim=embed_dim,
+                depth=depth,
                 attn_flash = True,
                 cross_attend = cross_attn_cond_dim > 0,
                 zero_init_branch_output=True,
@@ -85,6 +139,20 @@ class XTransformersAudioLMBackbone(AudioLMBackbone):
                 nn.Linear(embed_dim, embed_dim, bias=False)
             )
 
+        if global_cond_dim > 0:
+            # Global conditioning
+            self.to_global_embed = nn.Sequential(
+                nn.Linear(global_cond_dim, depth*global_cond_dim*2, bias=False),
+                Rearrange('b (n d) -> n b d', n=depth*2, d=global_cond_dim)
+            )
+
+            # Replace the norms in each layer with AdaRMSNorm 
+            for layer in self.model.attn_layers.layers:
+                norms = layer[0]
+                for i, norm in enumerate(norms):
+                    if norm is not None:
+                        norms[i] = AdaRMSNorm(self.model.attn_layers.dim, global_cond_dim)
+
     def forward(self, x, mask=None, prepend_cond=None, prepend_cond_mask=None, cross_attn_cond=None, global_cond=None, use_cache=False):
 
         prepend_length = 0
@@ -100,6 +168,18 @@ class XTransformersAudioLMBackbone(AudioLMBackbone):
         if cross_attn_cond is not None:
             # Project the cross-attention conditioning to the embedding dimension
             cross_attn_cond = self.to_cross_attn_embed(cross_attn_cond)
+
+        if global_cond is not None:
+            # Project the global conditioning to the embedding dimension
+            global_cond = self.to_global_embed(global_cond)
+            current_norm_count = 0
+            for layer in self.model.attn_layers.layers:
+                norms = layer[0]
+                for norm in norms:
+                    if norm is not None:
+                        norm.set_cond(global_cond[current_norm_count])
+                        current_norm_count += 1
+        
 
         return self.model(x, mask=mask, context=cross_attn_cond, prepend_embeds=prepend_cond, prepend_mask=prepend_cond_mask)[:, prepend_length:, :]
     
