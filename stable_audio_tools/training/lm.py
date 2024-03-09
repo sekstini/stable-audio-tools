@@ -66,6 +66,9 @@ class AudioLanguageModelTrainingWrapper(pl.LightningModule):
             if lm_opt_config["scheduler"]["type"] == "OneCycleLR":
                 total_steps = self.trainer.estimated_stepping_batches
                 lm_opt_config["scheduler"]["config"]["total_steps"] = total_steps
+            elif lm_opt_config["scheduler"]["type"] == "LinearWarmupCosineAnnealingLR":
+                total_steps = self.trainer.estimated_stepping_batches
+                lm_opt_config["scheduler"]["config"]["max_steps"] = total_steps
             sched_lm = create_scheduler_from_config(lm_opt_config['scheduler'], opt_lm)
             sched_lm_config = {
                 "scheduler": sched_lm,

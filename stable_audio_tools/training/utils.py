@@ -1,6 +1,9 @@
 import torch
 import os
 
+from stable_audio_tools.training.lr_schedulers.linear_warmup_cosine_annealing import LinearWarmupCosineAnnealingLR
+
+
 def get_rank():
     """Get rank of current process."""
     
@@ -116,6 +119,8 @@ def create_scheduler_from_config(scheduler_config, optimizer):
     """
     if scheduler_config["type"] == "InverseLR":
         scheduler_fn = InverseLR
+    elif scheduler_config["type"] == "LinearWarmupCosineAnnealingLR":
+        scheduler_fn = LinearWarmupCosineAnnealingLR
     else:
         scheduler_fn = getattr(torch.optim.lr_scheduler, scheduler_config["type"])
     scheduler = scheduler_fn(optimizer, **scheduler_config["config"])
