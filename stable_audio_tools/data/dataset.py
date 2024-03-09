@@ -18,7 +18,8 @@ from aeiou.core import is_silence
 from os import path
 from pedalboard.io import AudioFile
 from torchaudio import transforms as T
-from typing import Optional, Callable, List
+from typing import Optional, Callable, Generic, TypeVar
+
 from pathlib import Path
 from torch.utils import data
 
@@ -120,7 +121,6 @@ class SampleDataset(torch.utils.data.Dataset):
         sample_size=65536, 
         sample_rate=48000, 
         keywords=None, 
-        relpath=None, 
         random_crop=True,
         force_channels="stereo",
         custom_metadata_fn: Optional[Callable[[str], str]] = None,
@@ -129,7 +129,6 @@ class SampleDataset(torch.utils.data.Dataset):
     ):
         super().__init__()
         self.filenames = []
-        self.relpath = relpath
         self.ext = ext
 
         self.augs = torch.nn.Sequential(
@@ -196,10 +195,6 @@ class SampleDataset(torch.utils.data.Dataset):
                 audio = self.encoding(audio)
 
             info["path"] = audio_filename
-
-            if self.relpath is not None:
-                info["relpath"] = path.relpath(audio_filename, self.relpath)
-
             info["timestamps"] = (t_start, t_end)
             info["seconds_start"] = seconds_start
             info["seconds_total"] = seconds_total
@@ -416,7 +411,7 @@ def collation_fn(samples):
 class S3WebDataLoader():
     def __init__(
         self,
-        datasets: List[S3DatasetConfig],
+        datasets: list[S3DatasetConfig],
         batch_size,
         sample_size,
         sample_rate=48000,
@@ -531,20 +526,68 @@ class SampleMetadata(msgspec.Struct, gc=False, array_like=True):
     c50: float
 
 MetadataList = list[SampleMetadata]
-_decode_metadata = msgspec.json.Decoder(MetadataList).decode
+_decode_metadata_list = msgspec.json.Decoder(MetadataList).decode
+_decode_metadata = msgspec.json.Decoder(SampleMetadata).decode
+_encode_metadata = msgspec.json.Encoder().encode
+
+L = TypeVar("L")
+class _SharedList(Generic[L]):
+    """
+    A list-like object whose items are serialized and stored in a numpy array. When
+    launching a process that uses _SharedMetadataList with "fork" start method,
+    the subprocess can read the same buffer without triggering copy-on-access. When
+    launching a process that uses _SharedMetadataList with "spawn/forkserver" start
+    method, the list will be pickled by a special ForkingPickler registered by PyTorch
+    that moves data to shared memory. In both cases, this allows parent and child
+    processes to share RAM for the list data, hence avoids the issue in
+    https://github.com/pytorch/pytorch/issues/13246.
+
+    See also https://ppwwyyxx.com/blog/2022/Demystify-RAM-Usage-in-Multiprocess-DataLoader/
+    on how it works.
+    """
+
+    def __init__(self, lst: list[L], *, serialize_fn: Callable[[L], bytes], deserialize_fn: Callable[[bytes], L]):
+        serialized = list(map(lambda x: np.frombuffer(serialize_fn(x), dtype=np.uint8), lst))
+        self._addr = np.cumsum(np.asarray(list(map(len, serialized)), dtype=np.int64))
+        self._lst = np.concatenate(serialized)
+        self._deserialize_fn = deserialize_fn
+
+    def __len__(self):
+        return len(self._addr)
+
+    def __getitem__(self, idx: int):
+        #addr, lst = self._addr.numpy(), self._lst.numpy()
+        addr, lst = self._addr, self._lst
+        start_addr = 0 if idx == 0 else addr[idx - 1]
+        end_addr = addr[idx]
+
+        return self._deserialize_fn(lst[start_addr:end_addr].tobytes())
+
 
 class MamboDataset(SampleDataset):
     def load_audio_filenames(self, dataset_path: str | Path, *args, **kwargs):
         self.dataset_path = Path(dataset_path).with_suffix(".zip")
         self.metadata_path = self.dataset_path.with_suffix(".json")
 
-        metadata = _decode_metadata(self.metadata_path.read_bytes())
-        self.metadata = dict(zip(map(operator.attrgetter("key"), metadata), metadata))
-        self.filenames = list(self.metadata.keys())
+        metadata = _decode_metadata_list(self.metadata_path.read_bytes())
+
+        self.metadata = _SharedList[SampleMetadata](
+            metadata,
+            serialize_fn=_encode_metadata,
+            deserialize_fn=_decode_metadata
+        )
+
+        self._filenames = _SharedList[str](
+            list(map(operator.attrgetter("key"), metadata)),
+            serialize_fn=str.encode,
+            deserialize_fn=bytes.decode
+        )
+
+        self.filenames = np.arange(len(self._filenames))
         self.zip_handle = None
 
-    def _load_metadata(self, basename: str) -> dict:
-        metadata = self.metadata[basename]
+    def _load_metadata(self, index: int) -> dict:
+        metadata = self.metadata[index]
         return {
             "prompt": metadata.prompt,
             "speaker_id": metadata.speaker_id,
@@ -554,13 +597,13 @@ class MamboDataset(SampleDataset):
             "c50": metadata.c50,
         }
 
-    def load_file(self, basename: str):
+    def load_file(self, index: int):
         if self.zip_handle is None:
             self.zip_handle = zipfile.ZipFile(self.dataset_path)
-        filename = f"{basename}.{self.ext}"
-        wav, sr = torchaudio.load(self.zip_handle.open(filename))
+        filename = f"{self._filenames[index]}.{self.ext}"
+        wav, sr = torchaudio.load(self.zip_handle.open(filename)) # type: ignore
         wav = torchaudio.functional.resample(wav, sr, self.sr)
-        metadata = self._load_metadata(basename)
+        metadata = self._load_metadata(index)
         return wav, metadata
 
 
@@ -608,7 +651,6 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
                 random_crop=dataset_config.get("random_crop", True),
                 force_channels=force_channels,
                 custom_metadata_fn=custom_metadata_fn,
-                relpath=training_dirs[0] #TODO: Make relpath relative to each training dir
             )
         else:
             train_sets = []
@@ -623,7 +665,6 @@ def create_dataloader_from_configs_and_args(model_config, args, dataset_config):
                     random_crop=dataset_config.get("random_crop", True),
                     force_channels=force_channels,
                     custom_metadata_fn=custom_metadata_fn,
-                    relpath=audio_dir,
                     ext=ext
                 )
                 train_sets.append(ts)
