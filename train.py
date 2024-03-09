@@ -134,7 +134,7 @@ def main():
             strategy = strategies.DDPStrategy(
                 gradient_as_bucket_view=True,
                 find_unused_parameters=False,
-                static_graph=True,
+                static_graph=False,
                 bucket_cap_mb=40,
             )
         else:
