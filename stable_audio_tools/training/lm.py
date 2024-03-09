@@ -187,7 +187,7 @@ class AudioLanguageModelDemoCallback(pl.Callback):
     @torch.no_grad()
     def on_train_batch_end(self, trainer, module: AudioLanguageModelTrainingWrapper, outputs, batch, batch_idx):        
 
-        if (trainer.global_step - 1) % self.demo_every != 0 or self.last_demo_step == trainer.global_step:
+        if trainer.global_step == 0 or (trainer.global_step - 1) % self.demo_every != 0 or self.last_demo_step == trainer.global_step:
             return
 
         module.eval()
